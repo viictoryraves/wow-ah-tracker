@@ -736,45 +736,93 @@ describe('sorting results', () => {
     expect(header(/price/i)).toHaveAttribute('aria-sort', 'none')
   })
 
-  it('sorts by the clicked header, asking the server, and marks the column', async () => {
+  const click = (user: ReturnType<typeof userEvent.setup>, name: RegExp) => user.click(within(header(name)).getByRole('button'))
+
+  it('starts the price lowest first, asking the server, and marks the column with its direction', async () => {
+    const { user, calls } = await searchLinen({ '/api/items?q=linen&realm=110&sort=price&dir=asc': [linen, silk] })
+    expect(header(/price/i)).toHaveAttribute('aria-sort', 'none')
+    await click(user, /price/i)
+    await waitFor(() => expect(calls).toContain('/api/items?q=linen&realm=110&sort=price&dir=asc'))
+    expect(header(/price/i)).toHaveAttribute('aria-sort', 'ascending')
+    await waitFor(() => expect(firstItem()).toHaveTextContent('Linen Cloth'))
+  })
+
+  it('reverses the price on the second click, to highest first, and does not fall back to the default order', async () => {
     const { user, calls } = await searchLinen({
+      '/api/items?q=linen&realm=110&sort=price&dir=asc': [linen, silk],
       '/api/items?q=linen&realm=110&sort=price': [silk, linen],
+    })
+    await click(user, /price/i)
+    await waitFor(() => expect(firstItem()).toHaveTextContent('Linen Cloth')) // the lowest-first results have arrived
+    await click(user, /price/i)
+    await waitFor(() => expect(calls).toContain('/api/items?q=linen&realm=110&sort=price'))
+    expect(header(/price/i)).toHaveAttribute('aria-sort', 'descending')
+    await waitFor(() => expect(firstItem()).toHaveTextContent('Silk Cloth'))
+  })
+
+  it('goes back to the default order only on the third click', async () => {
+    const { user, calls } = await searchLinen({
+      '/api/items?q=linen&realm=110&sort=price&dir=asc': [linen, silk],
+      '/api/items?q=linen&realm=110&sort=price': [silk, linen],
+    })
+    await click(user, /price/i)
+    await waitFor(() => expect(firstItem()).toHaveTextContent('Linen Cloth'))
+    await click(user, /price/i)
+    await waitFor(() => expect(firstItem()).toHaveTextContent('Silk Cloth'))
+    calls.length = 0
+    await click(user, /price/i)
+    await waitFor(() => expect(header(/price/i)).toHaveAttribute('aria-sort', 'none'))
+    await waitFor(() => expect(calls.filter((c) => c.startsWith('/api/items?'))).toEqual(['/api/items?q=linen&realm=110']))
+  })
+
+  it('starts the units sold highest first, and the other column loses its mark', async () => {
+    const { user, calls } = await searchLinen({
+      '/api/items?q=linen&realm=110&sort=price&dir=asc': [linen, silk],
       '/api/items?q=linen&realm=110&sort=sold-low': [linen, silk],
       '/api/items?q=linen&realm=110&sort=sold-high': [silk, linen],
     })
-    await user.click(within(header(/price/i)).getByRole('button'))
-    await waitFor(() => expect(calls).toContain('/api/items?q=linen&realm=110&sort=price'))
-    await waitFor(() => expect(firstItem()).toHaveTextContent('Silk Cloth'))
-    expect(header(/price/i)).toHaveAttribute('aria-sort', 'descending')
-
-    await user.click(within(header(/sold low/i)).getByRole('button'))
-    await waitFor(() => expect(firstItem()).toHaveTextContent('Linen Cloth'))
+    await click(user, /price/i)
+    await waitFor(() => expect(header(/price/i)).toHaveAttribute('aria-sort', 'ascending'))
+    await click(user, /sold low/i)
+    await waitFor(() => expect(calls).toContain('/api/items?q=linen&realm=110&sort=sold-low'))
     expect(header(/sold low/i)).toHaveAttribute('aria-sort', 'descending')
     expect(header(/price/i)).toHaveAttribute('aria-sort', 'none')
 
-    await user.click(within(header(/sold high/i)).getByRole('button'))
+    await click(user, /sold high/i)
     await waitFor(() => expect(firstItem()).toHaveTextContent('Silk Cloth'))
     expect(header(/sold high/i)).toHaveAttribute('aria-sort', 'descending')
     expect(header(/sold low/i)).toHaveAttribute('aria-sort', 'none')
   })
 
-  it('goes back to the default order when the sorted header is clicked again', async () => {
-    const { user, calls } = await searchLinen({ '/api/items?q=linen&realm=110&sort=price': [silk, linen] })
-    await user.click(within(header(/price/i)).getByRole('button'))
-    await waitFor(() => expect(firstItem()).toHaveTextContent('Silk Cloth')) // the sorted results have arrived
-    calls.length = 0
-    await user.click(within(header(/price/i)).getByRole('button'))
-    await waitFor(() => expect(header(/price/i)).toHaveAttribute('aria-sort', 'none'))
-    await waitFor(() => expect(calls.filter((c) => c.startsWith('/api/items?'))).toEqual(['/api/items?q=linen&realm=110']))
+  it('only claims the most listed order when no column is sorted', async () => {
+    const { user } = await renderApp({
+      '/api/categories?realm=110': categories,
+      '/api/items?realm=110&category=7': [linen],
+      '/api/items?realm=110&category=7&sort=price&dir=asc': [linen],
+    })
+    await user.selectOptions(await screen.findByLabelText(/^category$/i), '7')
+    expect(await screen.findByText(/most listed in/i)).toBeInTheDocument()
+    await click(user, /price/i)
+    await waitFor(() => expect(screen.queryByText(/most listed in/i)).not.toBeInTheDocument())
   })
 
-  it('keeps the order in the address and restores it on reload', async () => {
-    window.history.replaceState(null, '', '/?realm=110&category=7&sort=sold-high')
-    const { calls } = await renderApp({ '/api/items?realm=110&category=7&sort=sold-high': [linen, silk] })
+  it('keeps the order and its direction in the address and restores them on reload', async () => {
+    window.history.replaceState(null, '', '/?realm=110&category=7&sort=price&dir=asc')
+    const { calls } = await renderApp({ '/api/items?realm=110&category=7&sort=price&dir=asc': [linen, silk] })
     await screen.findByRole('button', { name: /silk cloth/i })
-    expect(calls).toContain('/api/items?realm=110&category=7&sort=sold-high')
+    expect(calls).toContain('/api/items?realm=110&category=7&sort=price&dir=asc')
+    expect(header(/price/i)).toHaveAttribute('aria-sort', 'ascending')
+    const params = new URLSearchParams(window.location.search)
+    expect(params.get('sort')).toBe('price')
+    expect(params.get('dir')).toBe('asc')
+  })
+
+  it('reads a descending order from the address, and ignores a direction with nothing sorted', async () => {
+    window.history.replaceState(null, '', '/?realm=110&category=7&sort=sold-high')
+    await renderApp({ '/api/items?realm=110&category=7&sort=sold-high': [linen, silk] })
+    await screen.findByRole('button', { name: /silk cloth/i })
     expect(header(/sold high/i)).toHaveAttribute('aria-sort', 'descending')
-    expect(new URLSearchParams(window.location.search).get('sort')).toBe('sold-high')
+    expect(new URLSearchParams(window.location.search).get('dir')).toBeNull() // highest first is the default direction
   })
 })
 
@@ -892,7 +940,7 @@ describe('the main header', () => {
   })
 
   it('brings the user back to the front page from a search with an item open', async () => {
-    const { user } = await renderApp({ '/api/items?q=linen&realm=110&sort=price': [linen] })
+    const { user } = await renderApp({ '/api/items?q=linen&realm=110&sort=price&dir=asc': [linen] })
     await search(user)
     await user.click(await screen.findByRole('button', { name: /linen cloth/i }))
     await screen.findByRole('region', { name: /linen cloth details/i })

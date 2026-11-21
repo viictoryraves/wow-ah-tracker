@@ -164,7 +164,7 @@ Every item endpoint takes `realm` = a **market (house) id**. Without it, the fir
 | Endpoint | Returns |
 |---|---|
 | `GET /api/realms` | rulesets with only their houses that have data: `[{id, name, houses:[{id, faction}]}]` |
-| `GET /api/items?q=&realm=&category=&sort=&lang=` | up to 20 items by name; with only `category`, up to 50 most listed; 400 if neither. `sort=price` orders by the lowest buyout, highest first; `sort=sold-low` / `sort=sold-high` by the units sold (`flows.sold_low` / `sold_high`) in the last 7 days, highest first; ties by name; any other value is a 400. Every item carries `soldLow`/`soldHigh`, the sums of `flows` over that window. `lang=es` returns the Spanish name (English where there is none) and a typed name matches either language; `lang` other than `en`/`es` is a 400 |
+| `GET /api/items?q=&realm=&category=&sort=&dir=&lang=` | up to 20 items by name; with only `category`, up to 50 most listed; 400 if neither. `sort=price` orders by the lowest buyout, highest first; `sort=sold-low` / `sort=sold-high` by the units sold (`flows.sold_low` / `sold_high`) in the last 7 days; highest first unless `dir=asc` (`dir=desc` is the default, anything else a 400); ties by name; any other `sort` is a 400. By price, items on sale in the latest snapshot always come before ones last seen earlier, in either direction. Every item carries `soldLow`/`soldHigh`, the sums of `flows` over that window. `lang=es` returns the Spanish name (English where there is none) and a typed name matches either language; `lang` other than `en`/`es` is a 400 |
 | `GET /api/categories?realm=&lang=` | categories sold in the market, by name: `[{id, name, soldLow, soldHigh}]`, the units sold in each over the last 7 days; `lang=es` names them in Spanish (one entry per category even while only some items have a Spanish name) |
 | `GET /api/items/{id}/history?realm=&days=` | snapshots (default 7 days, capped at retention) |
 | `GET /api/items/{id}/insights?realm=` | insights, advice and the 7-day demand reading; 404 without prices |
@@ -199,8 +199,10 @@ never through a shell.
 - **Not on sale now:** the API's `current` flag (`snapshot ts = the market's latest`) drives the "Not listed now" tag, a
   muted price and the "Last price seen" label. `sort=price` orders `on_sale DESC` first. `ItemsMissingName` orders by
   `MAX(min × quantity) DESC`.
-- **Results table:** a real `<table>`; the Price and Sold headers are buttons with `aria-sort` that toggle `sort`
-  (`price`, `sold-low`, `sold-high` or none) and so re-run the search; the arrow is drawn by CSS.
+- **Results table:** a real `<table>`; the Price and Sold headers are buttons with `aria-sort` that cycle the `order`
+  (`sort` of `price`, `sold-low`, `sold-high` or none, plus a `dir`) and so re-run the search. A column starts at
+  `FIRST_DIR` (price `asc`, the sold columns `desc`), the second click reverses it and the third clears it; the
+  address carries `sort` and, only for `asc`, `dir`. The arrow (▲ ascending, ▼ descending) is drawn by CSS.
 - **Languages:** `i18n.ts` holds the English messages (the source of the `Key` type) and the Spanish ones
   (`Record<Key, string>`, so a missing translation does not compile), `translate` with `{name}` placeholders,
   `detectLang` and the saved choice (`localStorage` key `lang`, read with a fallback when storage is blocked).

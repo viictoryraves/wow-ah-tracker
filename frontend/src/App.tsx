@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchCategories, fetchHistory, fetchInsights, fetchRealms, fetchStatus, searchItems } from './api'
-import type { Category, Insights, ItemSummary, Point, Realm, Sort } from './api'
+import type { Category, Dir, Insights, ItemSummary, Point, Realm, Sort } from './api'
 import { formatAgo, formatClock, formatCount, formatSold } from './format'
 import { I18nProvider } from './I18nProvider'
 import { LanguageSwitch } from './LanguageSwitch'
@@ -22,6 +22,12 @@ const SEARCH_DELAY_MS = 300
 const MIN_QUERY_LENGTH = 2
 const ALL_CATEGORIES = 'all'
 const SORTS: Sort[] = ['price', 'sold-low', 'sold-high']
+// Which end a column starts at: the cheapest price first, the most units sold first.
+const FIRST_DIR: Record<Exclude<Sort, ''>, Dir> = { price: 'asc', 'sold-low': 'desc', 'sold-high': 'desc' }
+interface Order {
+  sort: Sort
+  dir: Dir
+}
 const STATUS_POLL_MS = 30_000 // how often to ask whether newer prices were published
 
 interface Props {
@@ -32,15 +38,16 @@ interface Props {
 interface SortHeaderProps {
   label: string
   hint?: string
-  column: Sort
+  column: Exclude<Sort, ''>
   sort: Sort
-  onSort: (column: Sort) => void
+  dir: Dir
+  onSort: (column: Exclude<Sort, ''>) => void
 }
 
 /** A column header that sorts the results by its column. */
-function SortHeader({ label, hint, column, sort, onSort }: SortHeaderProps) {
+function SortHeader({ label, hint, column, sort, dir, onSort }: SortHeaderProps) {
   return (
-    <th scope="col" className="num" aria-sort={sort === column ? 'descending' : 'none'}>
+    <th scope="col" className="num" aria-sort={sort !== column ? 'none' : dir === 'asc' ? 'ascending' : 'descending'}>
       <button type="button" className="sort" title={hint} onClick={() => onSort(column)}>
         {label}
       </button>
@@ -76,10 +83,11 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
     const wanted = initial.get('category')
     return wanted !== null && wanted !== '' && !Number.isNaN(Number(wanted)) ? Number(wanted) : undefined
   })
-  const [sort, setSort] = useState<Sort>(() => {
-    const wanted = initial.get('sort')
-    return SORTS.find((value) => value === wanted) ?? ''
+  const [order, setOrder] = useState<Order>(() => {
+    const sort = SORTS.find((value) => value === initial.get('sort')) ?? ''
+    return { sort, dir: sort && initial.get('dir') === 'asc' ? 'asc' : 'desc' } // a direction means nothing without a column
   })
+  const { sort, dir } = order
   const [selected, setSelected] = useState<ItemSummary>()
   const [days, setDays] = useState(1)
   const [history, setHistory] = useState<{ key: string; points: Point[] }>()
@@ -89,7 +97,7 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
   const pendingItem = useRef(Number(initial.get('item')) || undefined) // item to reselect after the first search
   const lastSearch = useRef('')
   const searchSeq = useRef(0)
-  const lastQuery = useRef<{ text: string; realm: number; category?: number; sort: Sort } | undefined>(undefined) // what the results on screen came from
+  const lastQuery = useRef<{ text: string; realm: number; category?: number; order: Order } | undefined>(undefined) // what the results on screen came from
   const nowRef = useRef(now)
   const realmRef = useRef<number | undefined>(realm)
   useEffect(() => {
@@ -187,7 +195,7 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
     const q = lastQuery.current
     if (!q || q.realm !== realmRef.current) return
     const seq = searchSeq.current
-    searchItems(q.text, q.realm, q.category, q.sort, lang)
+    searchItems(q.text, q.realm, q.category, q.order.sort, lang, q.order.dir)
       .then((found) => {
         if (seq !== searchSeq.current) return
         setResults(found)
@@ -219,16 +227,16 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
   const currentHouses = currentRealm?.houses ?? []
 
   // Answers to older searches are ignored, so a slow one cannot overwrite a newer one.
-  const runSearch = useCallback((q: string, realmId: number, categoryId: number | undefined, order: Sort) => {
-    lastSearch.current = `${realmId}|${q}|${categoryId ?? ''}|${order}`
-    lastQuery.current = { text: q, realm: realmId, category: categoryId, sort: order }
+  const runSearch = useCallback((q: string, realmId: number, categoryId: number | undefined, by: Order) => {
+    lastSearch.current = `${realmId}|${q}|${categoryId ?? ''}|${by.sort}|${by.dir}`
+    lastQuery.current = { text: q, realm: realmId, category: categoryId, order: by }
     const seq = ++searchSeq.current
     const current = () => seq === searchSeq.current
     setError(false)
     setSelected(undefined)
     setResults(undefined)
     setSearching(true)
-    searchItems(q, realmId, categoryId, order, lang)
+    searchItems(q, realmId, categoryId, by.sort, lang, by.dir)
       .then((found) => {
         if (!current()) return
         setResults(found)
@@ -248,13 +256,13 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
   // Search as the user types (or browse once a category is chosen), when they pause.
   useEffect(() => {
     if (!canSearch || realm === undefined) return
-    const key = `${realm}|${searchText}|${category ?? ''}|${sort}`
+    const key = `${realm}|${searchText}|${category ?? ''}|${sort}|${dir}`
     if (lastSearch.current === key) return
     const timer = setTimeout(() => {
-      if (lastSearch.current !== key) runSearch(searchText, realm, category, sort) // the Search button may have run it meanwhile
+      if (lastSearch.current !== key) runSearch(searchText, realm, category, order) // the Search button may have run it meanwhile
     }, SEARCH_DELAY_MS)
     return () => clearTimeout(timer)
-  }, [canSearch, searchText, category, sort, realm, runSearch])
+  }, [canSearch, searchText, category, sort, dir, order, realm, runSearch])
 
   useEffect(() => {
     if (realm === undefined) return
@@ -262,9 +270,10 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
     if (typed) params.set('q', typed)
     if (category !== undefined) params.set('category', String(category))
     if (sort) params.set('sort', sort)
+    if (sort && dir === 'asc') params.set('dir', 'asc')
     if (selected) params.set('item', String(selected.id))
     window.history.replaceState(null, '', `?${params}`)
-  }, [realm, typed, category, sort, selected])
+  }, [realm, typed, category, sort, dir, selected])
 
   // Forget the results on screen and any search still in flight, back to the guidance.
   const clearResults = () => {
@@ -287,7 +296,7 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
     e.preventDefault()
     setQuery('')
     setCategory(undefined)
-    setSort('')
+    setOrder({ sort: '', dir: 'desc' })
     setError(false)
     clearResults()
   }
@@ -324,12 +333,18 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
     }
   }, [selectedId, closeDetails])
 
-  // Clicking a column sorts by it, highest first; clicking it again goes back to the default order.
-  const toggleSort = (column: Sort) => setSort((current) => (current === column ? '' : column))
+  // Clicking a column sorts by it, starting at its usual end; a second click reverses it and a third goes back
+  // to the default order.
+  const toggleSort = (column: Exclude<Sort, ''>) =>
+    setOrder((current) => {
+      if (current.sort !== column) return { sort: column, dir: FIRST_DIR[column] }
+      if (current.dir === FIRST_DIR[column]) return { sort: column, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+      return { sort: '', dir: 'desc' }
+    })
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    if ((typed || category !== undefined) && realm !== undefined) runSearch(typed, realm, category, sort)
+    if ((typed || category !== undefined) && realm !== undefined) runSearch(typed, realm, category, order)
   }
 
   return (
@@ -456,12 +471,13 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
                 <thead>
                   <tr>
                     <th scope="col">{t('colItem')}</th>
-                    <SortHeader label={t('colPrice')} column="price" sort={sort} onSort={toggleSort} />
+                    <SortHeader label={t('colPrice')} column="price" sort={sort} dir={dir} onSort={toggleSort} />
                     <SortHeader
                       label={t('colSoldLow')}
                       hint={t('hintSoldLow')}
                       column="sold-low"
                       sort={sort}
+                      dir={dir}
                       onSort={toggleSort}
                     />
                     <SortHeader
@@ -469,6 +485,7 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
                       hint={t('hintSoldHigh')}
                       column="sold-high"
                       sort={sort}
+                      dir={dir}
                       onSort={toggleSort}
                     />
                   </tr>

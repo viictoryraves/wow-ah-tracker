@@ -116,7 +116,7 @@ const (
 	browseLimit = 50
 )
 
-// searchItems serves /api/items?q=&realm=&category=&sort=. It needs a query, a category, or both:
+// searchItems serves /api/items?q=&realm=&category=&sort=&dir=. It needs a query, a category, or both:
 // a category alone browses what is on sale in that category.
 func (s *server) searchItems(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -148,12 +148,21 @@ func (s *server) searchItems(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid sort", http.StatusBadRequest)
 		return
 	}
+	var asc bool
+	switch r.URL.Query().Get("dir") {
+	case "", "desc":
+	case "asc":
+		asc = true
+	default:
+		http.Error(w, "invalid dir", http.StatusBadRequest)
+		return
+	}
 	limit := searchLimit
 	if q == "" {
 		limit = browseLimit
 	}
 	items, err := s.st.SearchItems(realm, store.ItemQuery{
-		Query: q, Class: class, Limit: limit, Sort: sort, Lang: lang,
+		Query: q, Class: class, Limit: limit, Sort: sort, Asc: asc, Lang: lang,
 		Since: time.Now().Add(-demandDays * 24 * time.Hour),
 	})
 	if err != nil {

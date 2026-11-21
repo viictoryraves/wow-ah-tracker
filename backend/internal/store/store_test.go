@@ -690,3 +690,45 @@ func TestByPriceTheItemsOnSaleNowComeBeforeOnesLastSeenEarlier(t *testing.T) {
 		t.Fatalf("got %v, want the live ones by price, then the one that is not on sale", got)
 	}
 }
+
+func TestResultsCanBeSortedLowestFirstToo(t *testing.T) {
+	s := categorised(t)
+	must(t, s.SaveFlows(110, t0, []poller.ItemFlow{{ItemID: 7, SoldLow: 10, SoldHigh: 12}, {ItemID: 9, SoldLow: 1, SoldHigh: 40}}))
+	since := t0.Add(-24 * time.Hour)
+	for _, c := range []struct {
+		sort string
+		want []string
+	}{
+		{SortPrice, []string{"Linen Bandage", "Linen Cloth", "Linen Vest"}},    // 5c, 28c, 300c
+		{SortSoldLow, []string{"Linen Vest", "Linen Bandage", "Linen Cloth"}},  // 0, 1, 10
+		{SortSoldHigh, []string{"Linen Vest", "Linen Cloth", "Linen Bandage"}}, // 0, 12, 40
+	} {
+		res, err := s.SearchItems(110, ItemQuery{Query: "linen", Sort: c.sort, Asc: true, Since: since, Limit: 10})
+		must(t, err)
+		got := names(res)
+		for i := range c.want {
+			if len(got) != len(c.want) || got[i] != c.want[i] {
+				t.Fatalf("%s ascending: got %v, want %v", c.sort, got, c.want)
+			}
+		}
+	}
+}
+
+func TestLowestFirstByPriceStillListsTheItemsOnSaleBeforeOnesLastSeenEarlier(t *testing.T) {
+	s := onAndOffSale(t)
+	// the bandage was last seen earlier and its old price (5c) is the lowest of all, but it is not on sale
+	res, err := s.SearchItems(110, ItemQuery{Query: "linen", Sort: SortPrice, Asc: true, Limit: 10})
+	must(t, err)
+	if got := names(res); len(got) != 3 || got[0] != "Linen Cloth" || got[1] != "Linen Vest" || got[2] != "Linen Bandage" {
+		t.Fatalf("got %v, want the cheapest on sale first and the item not on sale last, however it is sorted", got)
+	}
+}
+
+func TestLowestFirstKeepsTheLimitOnTheCheapestItems(t *testing.T) {
+	s := categorised(t)
+	res, err := s.SearchItems(110, ItemQuery{Query: "linen", Sort: SortPrice, Asc: true, Limit: 1})
+	must(t, err)
+	if got := names(res); len(got) != 1 || got[0] != "Linen Bandage" {
+		t.Fatalf("got %v, want the single cheapest item", got)
+	}
+}

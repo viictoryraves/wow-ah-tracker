@@ -144,8 +144,9 @@ button.primary { color: var(--accent-text); background: var(--accent); border-co
   color: inherit; background: none; border: 0; border-radius: 4px; cursor: pointer;
 }
 .results button.sort:hover { color: var(--accent); }
-.results th[aria-sort='descending'] { color: var(--gold); }
+.results th[aria-sort='descending'], .results th[aria-sort='ascending'] { color: var(--gold); }
 .results th[aria-sort='descending'] button.sort::after { content: ' ▼'; font-size: 0.7em; }
+.results th[aria-sort='ascending'] button.sort::after { content: ' ▲'; font-size: 0.7em; }
 .result {
   width: 100%; min-height: 44px; padding: 4px 8px;
   display: flex; align-items: center; gap: 10px; text-align: left; border-color: transparent; background: none;

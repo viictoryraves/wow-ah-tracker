@@ -59,13 +59,17 @@ export const fetchCategories = (realm: number, lang: Lang = 'en') =>
 /** How results are ordered: the server's default (by name, or the most listed when browsing), or the highest first by price or by units sold (low or high estimate). */
 export type Sort = '' | 'price' | 'sold-low' | 'sold-high'
 
+/** Which end of a sorted column comes first. */
+export type Dir = 'asc' | 'desc'
+
 /** By name, within a category, or both. Only a category browses what is on sale, the most listed first. */
-export const searchItems = (q: string, realm: number, category?: number, sort: Sort = '', lang: Lang = 'en') => {
+export const searchItems = (q: string, realm: number, category?: number, sort: Sort = '', lang: Lang = 'en', dir: Dir = 'desc') => {
   const params = [
     q ? `q=${encodeURIComponent(q)}` : '',
     `realm=${realm}`,
     category !== undefined ? `category=${category}` : '',
     sort ? `sort=${sort}` : '',
+    sort && dir === 'asc' ? 'dir=asc' : '', // highest first is the server's default
     lang === 'es' ? 'lang=es' : '',
   ]
   return getJSON<ItemSummary[]>(`/api/items?${params.filter(Boolean).join('&')}`)

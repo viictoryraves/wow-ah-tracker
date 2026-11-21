@@ -689,3 +689,31 @@ func TestItemsSayWhetherTheyAreOnSaleNow(t *testing.T) {
 		t.Errorf("current = %v, want Linen Cloth on sale and Old Cloth not", now)
 	}
 }
+
+func TestItemsCanBeSortedInEitherDirection(t *testing.T) {
+	h, _ := categorisedMarket(t)
+	first := func(query string) string {
+		var got []store.ItemSummary
+		rec := get(t, h, "/api/items?realm=110&category=7&"+query)
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil || len(got) != 2 {
+			t.Fatalf("%s: code %d body %s", query, rec.Code, rec.Body)
+		}
+		return got[0].Name
+	}
+	if got := first("sort=price"); got != "Silk Cloth" {
+		t.Errorf("default direction first = %s, want the dearest (Silk Cloth, 150c)", got)
+	}
+	if got := first("sort=price&dir=desc"); got != "Silk Cloth" {
+		t.Errorf("dir=desc first = %s, want Silk Cloth", got)
+	}
+	if got := first("sort=price&dir=asc"); got != "Linen Cloth" {
+		t.Errorf("dir=asc first = %s, want the cheapest (Linen Cloth, 28c)", got)
+	}
+}
+
+func TestAnUnknownDirectionIsRejected(t *testing.T) {
+	h, _ := categorisedMarket(t)
+	if rec := get(t, h, "/api/items?realm=110&category=7&sort=price&dir=sideways"); rec.Code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400", rec.Code)
+	}
+}

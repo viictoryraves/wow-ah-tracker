@@ -394,14 +394,15 @@ type ItemQuery struct {
 	Class *int
 	Limit int
 	Lang  string    // "es" for Spanish names (English where there is none yet); anything else is English
-	Sort  string    // "" for the default order, or SortPrice / SortSoldLow / SortSoldHigh (highest first)
+	Sort  string    // "" for the default order, or SortPrice / SortSoldLow / SortSoldHigh
+	Asc   bool      // with a Sort: lowest first instead of highest first
 	Since time.Time // the sold sorts count the units sold since then
 }
 
 // LangSpanish asks for Spanish (Spain) texts; any other language is English.
 const LangSpanish = "es"
 
-// Orders a search can be sorted by, always the highest first.
+// Orders a search can be sorted by, highest first unless ItemQuery.Asc says otherwise.
 const (
 	SortPrice    = "price"     // the lowest buyout now
 	SortSoldLow  = "sold-low"  // units sold or cancelled recently that cannot have expired
@@ -426,13 +427,17 @@ func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
 	if q.Query == "" {
 		browsing, order = 1, "sn.quantity DESC, "+name
 	}
+	dir := "DESC"
+	if q.Asc {
+		dir = "ASC"
+	}
 	switch q.Sort {
 	case SortPrice:
-		order = "on_sale DESC, sn.min DESC, " + name // a price last seen earlier does not outrank one on sale now
+		order = "on_sale DESC, sn.min " + dir + ", " + name // a price last seen earlier never outranks one on sale now, either way
 	case SortSoldLow:
-		order = "sold_low DESC, " + name
+		order = "sold_low " + dir + ", " + name
 	case SortSoldHigh:
-		order = "sold_high DESC, " + name
+		order = "sold_high " + dir + ", " + name
 	}
 	rows, err := s.db.Query(`
 		SELECT i.id, `+name+`, COALESCE(i.icon, ''), sn.min, sn.median, sn.quantity,
