@@ -43,7 +43,23 @@ type Realm struct {
 	Houses []House
 }
 
+// Update says that the database got new prices: a snapshot Blizzard published that
+// was not stored before. It is what a notification is built from.
+type Update struct {
+	Realm  string   // the ruleset, e.g. "PvP"
+	Houses []string // the factions whose snapshot is new, e.g. alliance and horde
+	Items  int      // item rows stored
+	// Compared is true when sales could be estimated against an earlier snapshot;
+	// SoldLow and SoldHigh are then the estimated units sold since then, over all the houses.
+	Compared          bool
+	SoldLow, SoldHigh int
+}
+
 type Ingester struct {
+	// OnUpdate, if set, is called after a poll that stored new snapshots. Restarting does
+	// not count: a snapshot that was already stored is not an update.
+	OnUpdate func(Update)
+
 	src       Source
 	st        *store.Store
 	dynamicNS string
@@ -54,6 +70,7 @@ type Ingester struct {
 	lastMod   map[int]time.Time // per house, to skip unchanged auction houses
 	skipUntil map[int]time.Time // rulesets without auction data: when to ask again
 	previous  map[int]snapshot  // per house, the listings of the last snapshot, to measure what sold
+	fresh     chan struct{}     // signalled when a snapshot is stored, so item names are looked up promptly
 }
 
 // snapshot is every listing of a house at the moment Blizzard last published it.
@@ -65,7 +82,7 @@ type snapshot struct {
 func New(src Source, st *store.Store, dynamicNS, staticNS string) *Ingester {
 	return &Ingester{
 		src: src, st: st, dynamicNS: dynamicNS, staticNS: staticNS, now: time.Now,
-		lastMod: map[int]time.Time{}, skipUntil: map[int]time.Time{}, previous: map[int]snapshot{},
+		lastMod: map[int]time.Time{}, skipUntil: map[int]time.Time{}, previous: map[int]snapshot{}, fresh: make(chan struct{}, 1),
 	}
 }
 
@@ -84,8 +101,9 @@ func (i *Ingester) PollRealm(ctx context.Context, r Realm) (int, error) {
 
 	total, noData := 0, 0
 	var firstErr error
+	update := Update{Realm: r.Name}
 	for _, h := range r.Houses {
-		n, err := i.pollHouse(ctx, r, h)
+		res, err := i.pollHouse(ctx, r, h)
 		switch {
 		case errors.Is(err, ErrNoAuctionData):
 			noData++
@@ -94,8 +112,18 @@ func (i *Ingester) PollRealm(ctx context.Context, r Realm) (int, error) {
 				firstErr = err
 			}
 		default:
-			total += n
+			total += res.items
+			if res.fresh {
+				update.Houses = append(update.Houses, h.Faction)
+				update.Items += res.items
+				update.SoldLow += res.soldLow
+				update.SoldHigh += res.soldHigh
+				update.Compared = update.Compared || res.compared
+			}
 		}
+	}
+	if len(update.Houses) > 0 && i.OnUpdate != nil {
+		i.OnUpdate(update)
 	}
 
 	if len(r.Houses) > 0 && noData == len(r.Houses) {
@@ -118,7 +146,15 @@ func isNotFound(err error) bool {
 	return errors.As(err, &se) && se.Code == 404
 }
 
-func (i *Ingester) pollHouse(ctx context.Context, r Realm, h House) (int, error) {
+// houseResult is what polling one house stored.
+type houseResult struct {
+	items             int
+	fresh             bool // a snapshot that was not stored before
+	compared          bool
+	soldLow, soldHigh int
+}
+
+func (i *Ingester) pollHouse(ctx context.Context, r Realm, h House) (houseResult, error) {
 	i.mu.Lock()
 	since := i.lastMod[h.ID]
 	i.mu.Unlock()
@@ -126,47 +162,65 @@ func (i *Ingester) pollHouse(ctx context.Context, r Realm, h House) (int, error)
 	auctions, kinds, lm, err := i.fetchHouse(ctx, r, h, since)
 	switch {
 	case errors.Is(err, blizzard.ErrNotModified):
-		return 0, nil
+		return houseResult{}, nil
 	case isNotFound(err):
-		return 0, ErrNoAuctionData
+		return houseResult{}, ErrNoAuctionData
 	case err != nil:
-		return 0, err
+		return houseResult{}, err
 	}
 
 	if lm.IsZero() {
 		lm = i.now()
 	}
+	known, err := i.st.HasSnapshot(h.ID, lm) // after a restart the same published moment comes round again
+	if err != nil {
+		return houseResult{}, err
+	}
 	stats := poller.Reduce(auctions)
 	if err := i.st.SaveSnapshot(h.ID, lm, stats); err != nil {
-		return 0, err
+		return houseResult{}, err
 	}
 	if err := i.st.SaveItemKinds(kinds); err != nil {
-		return 0, err
+		return houseResult{}, err
 	}
-	if err := i.saveFlows(h, lm, auctions); err != nil {
-		return 0, err
+	res := houseResult{items: len(stats), fresh: !known && len(stats) > 0}
+	if res.compared, res.soldLow, res.soldHigh, err = i.saveFlows(h, lm, auctions); err != nil {
+		return houseResult{}, err
 	}
 	i.mu.Lock()
 	i.lastMod[h.ID] = lm
 	i.mu.Unlock()
-	return len(stats), nil
+	select {
+	case i.fresh <- struct{}{}: // wake the maintenance loop; one pending wake-up is enough
+	default:
+	}
+	return res, nil
 }
 
 // saveFlows compares the house's listings with the previous snapshot and stores what
 // sold and what was newly listed. The first snapshot has nothing to compare with.
-func (i *Ingester) saveFlows(h House, at time.Time, auctions []blizzard.Auction) error {
+// It returns whether a comparison happened and the estimated units sold (low, high).
+func (i *Ingester) saveFlows(h House, at time.Time, auctions []blizzard.Auction) (compared bool, soldLow, soldHigh int, err error) {
 	i.mu.Lock()
 	prev, had := i.previous[h.ID]
 	i.previous[h.ID] = snapshot{at: at, auctions: auctions}
 	i.mu.Unlock()
 	if !had {
-		return nil
+		return false, 0, 0, nil
 	}
-	flows := poller.Flows(prev.auctions, auctions, at.Sub(prev.at))
-	if len(flows) == 0 {
-		return nil
+	gap := at.Sub(prev.at)
+	if gap <= 0 || gap > poller.MaxGap || len(prev.auctions) == 0 {
+		return false, 0, 0, nil // nothing reliable to compare with
 	}
-	return i.st.SaveFlows(h.ID, at, flows)
+	flows := poller.Flows(prev.auctions, auctions, gap)
+	for _, f := range flows {
+		soldLow += f.SoldLow
+		soldHigh += f.SoldHigh
+	}
+	if len(flows) > 0 {
+		err = i.st.SaveFlows(h.ID, at, flows)
+	}
+	return true, soldLow, soldHigh, err
 }
 
 // fetchHouse downloads a house: the regular listings, then (only if they
@@ -219,6 +273,9 @@ func (i *Ingester) FillItemNames(ctx context.Context, limit int) error {
 		if err := i.st.SaveItem(id, info.Name, info.Icon, info.VendorSell); err != nil {
 			return err
 		}
+		if err := i.st.SaveItemClass(id, info.ClassID, info.ClassName); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -265,11 +322,70 @@ func containsInt(list []int, v int) bool {
 	return false
 }
 
-// Run polls all realms now and then every interval until ctx is cancelled.
-// A ruleset that fails or has no data never stops the others.
-func (i *Ingester) Run(ctx context.Context, realms []Realm, interval time.Duration, retentionDays int) {
+// Blizzard publishes the auction houses once an hour, in a burst a few seconds long, and
+// says the interval may change. So the schedule follows what was actually published:
+// the next publication is expected an hour after the last one, and polling is quick only
+// around that moment.
+const (
+	publishEvery  = time.Hour
+	pollLead      = 10 * time.Second // start looking this long before it is due
+	fastPoll      = 5 * time.Second  // how often to look around the due time
+	pollGrace     = 10 * time.Minute // after this long overdue something is unusual: stop hammering
+	maintainEvery = 5 * time.Minute
+)
+
+// nextPoll says how long to wait before polling again, given when each house last
+// published. Far from the next publication it waits the base interval (or wakes up just
+// before it is due); around it, it polls every few seconds until every house has the new
+// data; if it is long overdue it falls back to the base interval.
+func nextPoll(now time.Time, lastPublished []time.Time, base time.Duration) time.Duration {
+	if len(lastPublished) == 0 {
+		return base
+	}
+	earliest := lastPublished[0]
+	for _, t := range lastPublished[1:] {
+		if t.Before(earliest) {
+			earliest = t
+		}
+	}
+	until := earliest.Add(publishEvery).Sub(now)
+	switch {
+	case until > pollLead:
+		if wake := until - pollLead; wake < base {
+			return wake
+		}
+		return base
+	case -until <= pollGrace:
+		return fastPoll
+	default:
+		return base
+	}
+}
+
+// published lists when each house last published (the houses that have data).
+func (i *Ingester) published() []time.Time {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	out := make([]time.Time, 0, len(i.lastMod))
+	for _, t := range i.lastMod {
+		out = append(out, t)
+	}
+	return out
+}
+
+// Run polls all realms now and then on Blizzard's publication schedule (base is the slowest
+// polling rhythm) until ctx is cancelled. Item names and retention run on their own, so
+// they can never make a poll late. A ruleset that fails or has no data never stops the others.
+func (i *Ingester) Run(ctx context.Context, realms []Realm, base time.Duration, retentionDays int) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		i.maintain(ctx, retentionDays)
+	}()
+
 	noData := map[int]bool{} // rulesets already reported, so the log stays quiet
-	cycle := func() {
+	for {
 		for _, r := range realms {
 			n, err := i.PollRealm(ctx, r)
 			switch {
@@ -285,6 +401,21 @@ func (i *Ingester) Run(ctx context.Context, realms []Realm, interval time.Durati
 				log.Printf("ruleset %d (%s): new snapshot stored (%d items)", r.ID, r.Name, n)
 			}
 		}
+		timer := time.NewTimer(nextPoll(i.now(), i.published(), base))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			wg.Wait()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+// maintain fills in item names and enforces retention: at start, after new prices arrive and
+// every few minutes (the name lookups are throttled to a batch per round).
+func (i *Ingester) maintain(ctx context.Context, retentionDays int) {
+	round := func() {
 		if err := i.FillItemNames(ctx, 500); err != nil && ctx.Err() == nil {
 			log.Printf("fill item names: %v", err)
 		}
@@ -292,15 +423,17 @@ func (i *Ingester) Run(ctx context.Context, realms []Realm, interval time.Durati
 			log.Printf("cleanup: %v", err)
 		}
 	}
-	cycle()
-	tick := time.NewTicker(interval)
+	tick := time.NewTicker(maintainEvery)
 	defer tick.Stop()
+	round()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			cycle()
+			round()
+		case <-i.fresh:
+			round()
 		}
 	}
 }

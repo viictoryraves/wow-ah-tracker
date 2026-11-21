@@ -28,9 +28,9 @@ type ItemFlow struct {
 	Listed int
 }
 
-// maxGap is the longest span Flows trusts: after this even the longest listings
+// MaxGap is the longest span Flows trusts: after this even the longest listings
 // (12 hours or more left) may have expired.
-const maxGap = 12 * time.Hour
+const MaxGap = 12 * time.Hour
 
 // timeLeftFloor is the least time a listing in each time_left bucket still has.
 var timeLeftFloor = map[string]time.Duration{
@@ -44,7 +44,7 @@ var timeLeftFloor = map[string]time.Duration{
 // movement, sorted by item. It returns nil when there is nothing reliable to compare:
 // no earlier snapshot, or a gap that is not positive or longer than 12 hours.
 func Flows(prev, cur []blizzard.Auction, gap time.Duration) []ItemFlow {
-	if len(prev) == 0 || gap <= 0 || gap > maxGap {
+	if len(prev) == 0 || gap <= 0 || gap > MaxGap {
 		return nil
 	}
 	now := make(map[int64]blizzard.Auction, len(cur))

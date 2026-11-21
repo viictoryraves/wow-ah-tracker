@@ -24,7 +24,14 @@ type fakeSource struct {
 	houseCalls       map[string]int // "110/regular", "110/commodities"
 	notModified      bool           // regular documents answer 304
 	names            map[int]string
-	vendor           map[int]int64 // what a vendor pays, by item
+	itemGate         chan struct{}    // when set, ItemInfo blocks until it is closed
+	vendor           map[int]int64    // what a vendor pays, by item
+	class            map[int]category // category by item; Trade Goods when absent
+}
+
+type category struct {
+	id   int
+	name string
 }
 
 func (f *fakeSource) Rulesets(context.Context, string) ([]blizzard.Ruleset, error) {
@@ -52,12 +59,23 @@ func (f *fakeSource) RulesetAuctions(_ context.Context, _ string, _, houseID int
 	return f.houseAuctions[houseID], f.lastMod, nil
 }
 
-func (f *fakeSource) ItemInfo(_ context.Context, _ string, id int) (blizzard.ItemInfo, error) {
+func (f *fakeSource) ItemInfo(ctx context.Context, _ string, id int) (blizzard.ItemInfo, error) {
+	if f.itemGate != nil {
+		select {
+		case <-f.itemGate:
+		case <-ctx.Done():
+			return blizzard.ItemInfo{}, ctx.Err()
+		}
+	}
 	n, ok := f.names[id]
 	if !ok {
 		return blizzard.ItemInfo{}, errors.New("404")
 	}
-	return blizzard.ItemInfo{Name: n, Icon: "https://icons/" + n + ".jpg", VendorSell: f.vendor[id]}, nil
+	info := blizzard.ItemInfo{Name: n, Icon: "https://icons/" + n + ".jpg", VendorSell: f.vendor[id], ClassID: 7, ClassName: "Trade Goods"}
+	if c, ok := f.class[id]; ok {
+		info.ClassID, info.ClassName = c.id, c.name
+	}
+	return info, nil
 }
 
 func source() *fakeSource {
@@ -295,6 +313,130 @@ func TestAnUnchangedPollKeepsTheBaselineForTheNextRealChange(t *testing.T) {
 	}
 }
 
+// --- telling someone when the database got new prices ---
+
+// recorder collects the updates an ingester reports.
+type recorder struct{ updates []Update }
+
+func (r *recorder) on(u Update) { r.updates = append(r.updates, u) }
+
+func TestANewSnapshotIsReportedOncePerPoll(t *testing.T) {
+	ing, _ := setup(t, source())
+	rec := &recorder{}
+	ing.OnUpdate = rec.on
+	if _, err := ing.PollRealm(context.Background(), pvp()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.updates) != 1 {
+		t.Fatalf("updates = %+v, want exactly one for the poll", rec.updates)
+	}
+	u := rec.updates[0]
+	if u.Realm != "PvP" || u.Items != 4 || len(u.Houses) != 2 || u.Houses[0] != "alliance" || u.Houses[1] != "horde" {
+		t.Errorf("update = %+v, want PvP, 4 items and the alliance and horde houses", u)
+	}
+	if u.Compared {
+		t.Error("the first snapshot has nothing to compare sales with")
+	}
+}
+
+func TestAPollThatFindsNothingNewReportsNothing(t *testing.T) {
+	src := source()
+	ing, _ := setup(t, src)
+	ctx := context.Background()
+	ing.PollRealm(ctx, pvp())
+	rec := &recorder{}
+	ing.OnUpdate = rec.on
+	src.notModified = true
+	ing.PollRealm(ctx, pvp())
+	if len(rec.updates) != 0 {
+		t.Errorf("updates = %+v, want none when Blizzard has nothing new", rec.updates)
+	}
+}
+
+func TestRestartingDoesNotCountTheSameSnapshotAsNew(t *testing.T) {
+	src := source()
+	ing, st := setup(t, src)
+	ctx := context.Background()
+	if _, err := ing.PollRealm(ctx, pvp()); err != nil {
+		t.Fatal(err)
+	}
+	// the daemon restarts: a fresh ingester sees the same published data again
+	again := New(src, st, "dynamic-forever-eu", "static-forever-eu")
+	rec := &recorder{}
+	again.OnUpdate = rec.on
+	if _, err := again.PollRealm(ctx, pvp()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.updates) != 0 {
+		t.Errorf("updates = %+v, want none: that moment was already stored", rec.updates)
+	}
+}
+
+func TestAnEmptyHouseIsNotAnUpdate(t *testing.T) {
+	ing, _ := setup(t, &fakeSource{lastMod: t0})
+	rec := &recorder{}
+	ing.OnUpdate = rec.on
+	ing.PollRealm(context.Background(), pvp())
+	if len(rec.updates) != 0 {
+		t.Errorf("updates = %+v, want none for houses without listings", rec.updates)
+	}
+}
+
+func TestOnlyTheHousesThatChangedAreNamed(t *testing.T) {
+	src := source()
+	ing, _ := setup(t, src)
+	ctx := context.Background()
+	ing.PollRealm(ctx, pvp())
+	rec := &recorder{}
+	ing.OnUpdate = rec.on
+	// Blizzard publishes house 110 first and 113 a moment later: only 110 has a newer time
+	src.lastMod = t0.Add(time.Hour)
+	src.houseErr = map[int]error{113: &blizzard.StatusError{Code: 500}}
+	ing.PollRealm(ctx, pvp())
+	if len(rec.updates) != 1 || len(rec.updates[0].Houses) != 1 || rec.updates[0].Houses[0] != "alliance" {
+		t.Fatalf("updates = %+v, want one update naming only the alliance house", rec.updates)
+	}
+}
+
+func TestTheUpdateCarriesTheEstimatedSalesSinceTheLastSnapshot(t *testing.T) {
+	src := &fakeSource{
+		lastMod: t0,
+		houseAuctions: map[int][]blizzard.Auction{110: {
+			{ID: 1, ItemID: 4409, Buyout: 500, Quantity: 3, TimeLeft: "VERY_LONG"},
+			{ID: 2, ItemID: 4409, Buyout: 900, Quantity: 2, TimeLeft: "SHORT"},
+		}},
+	}
+	ing, _ := setup(t, src)
+	r := Realm{ID: 1, Name: "PvP", Houses: []House{{ID: 110, Faction: "alliance"}}}
+	ctx := context.Background()
+	ing.PollRealm(ctx, r)
+	rec := &recorder{}
+	ing.OnUpdate = rec.on
+	src.houseAuctions[110] = nil // both listings gone an hour later
+	src.houseCommodities = map[int][]blizzard.Auction{110: {{ID: 9, ItemID: 2589, Buyout: 100, Quantity: 5, TimeLeft: "LONG"}}}
+	src.lastMod = t0.Add(time.Hour)
+	ing.PollRealm(ctx, r)
+	if len(rec.updates) != 1 {
+		t.Fatalf("updates = %+v", rec.updates)
+	}
+	u := rec.updates[0]
+	if !u.Compared || u.SoldLow != 3 || u.SoldHigh != 5 {
+		t.Errorf("update = %+v, want sales compared: 3 to 5 units (the SHORT listing may have expired)", u)
+	}
+}
+
+func TestAHouseFailureStillReportsTheHousesThatWorked(t *testing.T) {
+	src := source()
+	src.houseErr = map[int]error{113: &blizzard.StatusError{Code: 500}}
+	ing, _ := setup(t, src)
+	rec := &recorder{}
+	ing.OnUpdate = rec.on
+	ing.PollRealm(context.Background(), pvp())
+	if len(rec.updates) != 1 || len(rec.updates[0].Houses) != 1 {
+		t.Errorf("updates = %+v, want the working house reported", rec.updates)
+	}
+}
+
 // --- no data (yet) ---
 
 func TestARulesetWhoseHousesAreAllMissingHasNoAuctionData(t *testing.T) {
@@ -381,6 +523,29 @@ func TestCleanupEnforcesRetention(t *testing.T) {
 	}
 }
 
+func TestFillItemNamesKeepsTheCategory(t *testing.T) {
+	src := source()
+	src.names = map[int]string{2589: "Linen Cloth", 4409: "Linen Vest"}
+	src.class = map[int]category{4409: {id: 4, name: "Armor"}}
+	ing, st := setup(t, src)
+	ctx := context.Background()
+	if _, err := ing.PollRealm(ctx, pvp()); err != nil {
+		t.Fatal(err)
+	}
+	if err := ing.FillItemNames(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	cats, err := st.Categories(110)
+	if err != nil || len(cats) != 2 || cats[0].Name != "Armor" || cats[1].Name != "Trade Goods" {
+		t.Fatalf("categories = %+v err = %v, want Armor and Trade Goods", cats, err)
+	}
+	armor := 4
+	res, _ := st.SearchItems(110, store.ItemQuery{Class: &armor, Limit: 10})
+	if len(res) != 1 || res[0].Name != "Linen Vest" {
+		t.Errorf("armor = %+v", res)
+	}
+}
+
 func TestFillItemNamesKeepsTheVendorPrice(t *testing.T) {
 	src := source()
 	src.names = map[int]string{2589: "Linen Cloth", 4409: "Linen Vest"}
@@ -414,7 +579,7 @@ func TestFillItemNamesSavesWhatItCanAndSkipsFailures(t *testing.T) {
 	if err := ing.FillItemNames(ctx, 10); err != nil {
 		t.Fatal(err)
 	}
-	res, _ := st.SearchItems(110, "linen", 10)
+	res, _ := st.SearchItems(110, store.ItemQuery{Query: "linen", Limit: 10})
 	if len(res) != 1 || res[0].Icon != "https://icons/Linen Vest.jpg" {
 		t.Fatalf("want the named item searchable with its icon, got %+v", res)
 	}
@@ -469,6 +634,60 @@ func TestDiscoveryFailsWhenNothingMatches(t *testing.T) {
 	}
 }
 
+// --- when to poll: follow Blizzard's hourly publication ---
+
+func TestWithoutAnyPublishedDataThePollingRhythmIsTheBaseInterval(t *testing.T) {
+	if d := nextPoll(t0, nil, time.Minute); d != time.Minute {
+		t.Errorf("delay = %v, want the base interval", d)
+	}
+}
+
+func TestFarFromTheNextPublicationItWaitsTheBaseInterval(t *testing.T) {
+	last := []time.Time{t0.Add(-30 * time.Minute)} // the next one is 30 minutes away
+	if d := nextPoll(t0, last, time.Minute); d != time.Minute {
+		t.Errorf("delay = %v, want the base interval", d)
+	}
+}
+
+func TestShortlyBeforeThePublicationItWakesUpJustBeforeIt(t *testing.T) {
+	// 30 seconds to go: wake 10 seconds before, i.e. in 20 seconds, instead of the full base interval
+	last := []time.Time{t0.Add(-time.Hour + 30*time.Second)}
+	if d := nextPoll(t0, last, time.Minute); d != 20*time.Second {
+		t.Errorf("delay = %v, want 20s", d)
+	}
+}
+
+func TestAroundThePublicationItPollsEveryFewSeconds(t *testing.T) {
+	// "due in" is how long until the last publication plus an hour: negative means it is already overdue
+	for _, dueIn := range []time.Duration{9 * time.Second, 0, -20 * time.Second, -2 * time.Minute, -9 * time.Minute} {
+		last := t0.Add(dueIn - time.Hour)
+		if d := nextPoll(t0, []time.Time{last}, time.Minute); d != fastPoll {
+			t.Errorf("due in %v: delay = %v, want %v", dueIn, d, fastPoll)
+		}
+	}
+}
+
+func TestAPublicationThatIsVeryLateIsNotHammered(t *testing.T) {
+	last := []time.Time{t0.Add(-time.Hour - 15*time.Minute)} // 15 minutes overdue: something is unusual
+	if d := nextPoll(t0, last, time.Minute); d != time.Minute {
+		t.Errorf("delay = %v, want the base interval after the grace period", d)
+	}
+}
+
+func TestTheEarliestDueHouseDecides(t *testing.T) {
+	// Blackwater already published the new hour; Alliance has not: keep polling quickly for it
+	blackwater := t0.Add(-5 * time.Second)         // new data just arrived
+	alliance := t0.Add(-time.Hour - 3*time.Second) // still on the old hour, due 3 seconds ago
+	if d := nextPoll(t0, []time.Time{blackwater, alliance}, time.Minute); d != fastPoll {
+		t.Errorf("delay = %v, want fast polling until every house has the new hour", d)
+	}
+	// once both have it, the next one is an hour away
+	alliance = t0.Add(-2 * time.Second)
+	if d := nextPoll(t0, []time.Time{blackwater, alliance}, time.Minute); d != time.Minute {
+		t.Errorf("delay = %v, want the base interval once everything is current", d)
+	}
+}
+
 // --- the loop ---
 
 func TestRunPollsEveryRealmImmediatelyAndStopsOnCancel(t *testing.T) {
@@ -486,7 +705,7 @@ func TestRunPollsEveryRealmImmediatelyAndStopsOnCancel(t *testing.T) {
 	for {
 		a, _ := st.History(110, 4409, time.Time{})
 		h, _ := st.History(113, 4409, time.Time{})
-		named, _ := st.SearchItems(113, "linen", 1)
+		named, _ := st.SearchItems(113, store.ItemQuery{Query: "linen", Limit: 1})
 		if len(a) == 1 && len(h) == 1 && len(named) == 1 {
 			break
 		}
@@ -500,6 +719,48 @@ func TestRunPollsEveryRealmImmediatelyAndStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not stop after cancel")
+	}
+}
+
+func TestPollingKeepsItsRhythmWhileItemNamesAreSlowToLoad(t *testing.T) {
+	// Looking up item names takes a long time (hundreds of requests). A new hourly snapshot must not
+	// wait behind it, or the prices would reach the database minutes late.
+	src := source()
+	src.names = map[int]string{4409: "Linen Vest", 2589: "Linen Cloth"}
+	src.itemGate = make(chan struct{}) // the lookups hang until the test ends
+	ing, st := setup(t, src)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		ing.Run(ctx, []Realm{pvp()}, 20*time.Millisecond, 30)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if pts, _ := st.History(110, 4409, time.Time{}); len(pts) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the first snapshot was never stored")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Blizzard publishes again while the name lookups are still hanging
+	src.lastMod = t0.Add(time.Hour)
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if pts, _ := st.History(110, 4409, time.Time{}); len(pts) == 2 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the new snapshot waited behind the item name lookups")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
