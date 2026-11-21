@@ -74,3 +74,25 @@ describe('formatSold', () => {
     expect(formatSold(1200, 3400)).toBe('1,200–3,400 sold')
   })
 })
+
+describe('in Spanish', () => {
+  it('uses the game\'s coin letters: oro, plata and cobre', () => {
+    expect(formatMoney(123456, 'es')).toBe('12o 34p 56c')
+    expect(formatMoney(7, 'es')).toBe('7c')
+  })
+  it('writes percentages the Spanish way', () => {
+    expect(formatPct(12.34, 'es')).toBe('+12,3 %')
+    expect(formatPct(-2, 'es')).toBe('-2,0 %')
+    expect(formatPct(null, 'es')).toBe('n/d')
+  })
+  it('says how long ago', () => {
+    expect(formatAgo(10_000, 'es')).toBe('ahora mismo')
+    expect(formatAgo(5 * 60_000, 'es')).toBe('hace 5 min')
+    expect(formatAgo(2 * 3_600_000, 'es')).toBe('hace 2 h')
+    expect(formatAgo(3 * 86_400_000, 'es')).toBe('hace 3 d')
+  })
+  it('counts units sold', () => {
+    expect(formatSold(12, 18, 'es')).toBe('12–18 vendidas')
+    expect(formatSold(7, 7, 'es')).toBe('7 vendidas')
+  })
+})

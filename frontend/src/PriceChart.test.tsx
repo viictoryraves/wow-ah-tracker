@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { I18nProvider } from './I18nProvider'
 import { PriceChart } from './PriceChart'
 import type { Point } from './api'
 
@@ -164,5 +165,35 @@ describe('PriceChart', () => {
       render(<PriceChart points={hourly(3)} timeZone="UTC" />)
       expect(screen.getByText(/times in utc/i)).toBeInTheDocument()
     })
+  })
+})
+
+describe('PriceChart in Spanish', () => {
+  const pts: Point[] = [
+    { time: '2026-11-01T10:00:00Z', min: 10000, median: 12000, avg: 12000, quantity: 5 },
+    { time: '2026-11-01T11:00:00Z', min: 12345, median: 15000, avg: 15000, quantity: 80 },
+  ]
+  const spanish = () =>
+    render(
+      <I18nProvider lang="es" setLang={() => {}}>
+        <PriceChart points={pts} timeZone="UTC" />
+      </I18nProvider>,
+    )
+
+  it('describes and reads out the prices in Spanish', () => {
+    spanish()
+    expect(screen.getByRole('img', { name: 'Historial de precios' })).toBeInTheDocument()
+    expect(screen.getByText(/precio más bajo de 1o a 1o 23p 45c en 2 capturas/i)).toBeInTheDocument()
+    expect(screen.getByTestId('readout')).toHaveTextContent(/más bajo 1o 23p 45c, mediano 1o 50p, 80 en subasta/i)
+    expect(screen.getByRole('figure')).toHaveTextContent(/precio más bajo.*precio mediano.*horas en utc/i)
+  })
+
+  it('says there is no history in Spanish', () => {
+    render(
+      <I18nProvider lang="es" setLang={() => {}}>
+        <PriceChart points={[]} />
+      </I18nProvider>,
+    )
+    expect(screen.getByText('Aún no hay historial de precios.')).toBeInTheDocument()
   })
 })

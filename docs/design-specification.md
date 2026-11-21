@@ -182,6 +182,16 @@ never through a shell.
   snapshots, a marker per snapshot up to 72, pointer and keyboard readout, text description for screen readers.
 - **Results table:** a real `<table>`; the Price and Sold headers are buttons with `aria-sort` that toggle `sort`
   (`price`, `sold-low`, `sold-high` or none) and so re-run the search; the arrow is drawn by CSS.
+- **Languages:** `i18n.ts` holds the English messages (the source of the `Key` type) and the Spanish ones
+  (`Record<Key, string>`, so a missing translation does not compile), `translate` with `{name}` placeholders,
+  `detectLang` and the saved choice (`localStorage` key `lang`, read with a fallback when storage is blocked).
+  `i18nContext.ts` offers `useI18n()` (`lang`, `t`, and `tn`, which fills placeholders with elements such as a price);
+  without a provider everything is English, so components work on their own. `App` owns the language and wraps `Page`
+  in `I18nProvider`. `format.ts` takes the language for numbers, percentages, times and the coin letters. The requests
+  carry `lang=es` only for Spanish, so English addresses are unchanged. A language change re-runs the categories and
+  reloads the results in place (the search key leaves the language out, so it does not reset the selection).
+  `LanguageSwitch` is a labelled group of two `aria-pressed` buttons named in their own language (no flags); clicks
+  on it do not count as outside clicks for the details panel.
 - **Home:** the title is an `<a href="/">` whose click handler clears query, category, sort, results and selection
   (`clearResults` also drops any search still in flight) and keeps the market.
 - **Details panel:** `closeDetails` refocuses the open `.result` button, then clears the selection (which also drops

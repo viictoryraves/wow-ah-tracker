@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react'
+import { I18nProvider } from './I18nProvider'
 import { InsightsPanel } from './InsightsPanel'
 import type { Insights } from './api'
 
@@ -250,5 +251,48 @@ describe('InsightsPanel', () => {
       render(<InsightsPanel insights={{ ...base, demand: null }} />)
       expect(screen.queryByRole('region', { name: /demand/i })).not.toBeInTheDocument()
     })
+  })
+})
+
+describe('InsightsPanel in Spanish', () => {
+  const spanish = (insights: Insights) =>
+    render(
+      <I18nProvider lang="es" setLang={() => {}}>
+        <InsightsPanel insights={insights} />
+      </I18nProvider>,
+    )
+
+  it('says the verdict, the rows and the notes in Spanish', () => {
+    spanish({ ...base, verdict: 'good-buy', cutPercent: 5 })
+    expect(screen.getByRole('status')).toHaveTextContent('Buen momento para comprar')
+    expect(screen.getByText('Valor de mercado')).toBeInTheDocument()
+    expect(screen.getByText(/tras la comisión del 5% de la casa de subastas/i, { selector: 'h3' })).toBeInTheDocument()
+    expect(screen.getByText(/precio justo|buen momento/i)).toBeInTheDocument()
+    expect(screen.queryByText(/market value|good time to buy/i)).not.toBeInTheDocument()
+  })
+
+  it('writes the percentages with a decimal comma', () => {
+    spanish({ ...base, vsMarketPct: -38.3 })
+    expect(screen.getByText('-38,3 %')).toBeInTheDocument()
+  })
+
+  it('shows the demand in Spanish', () => {
+    spanish({
+      ...base,
+      demand: {
+        observedHours: 6, soldLow: 5, soldHigh: 9, sales: 3, listed: 7, perDayLow: 20, perDayHigh: 36,
+        sellThroughPct: 30, daysOfSupplyLow: 2, daysOfSupplyHigh: 4, level: 'high',
+      },
+    })
+    const demand = screen.getByRole('region', { name: 'Demanda' })
+    expect(within(demand).getByText('Demanda alta')).toBeInTheDocument()
+    expect(within(demand).getByText('20-36 unidades')).toBeInTheDocument()
+    expect(within(demand).getByText('2.0-4.0 días')).toBeInTheDocument()
+    expect(within(demand).getByText(/basado en 6 horas de capturas/i)).toBeInTheDocument()
+  })
+
+  it('puts the prices in the vendor warning in Spanish', () => {
+    spanish({ ...base, belowVendor: true, vendorSell: 500, netAtListPrice: 400 })
+    expect(screen.getByRole('note')).toHaveTextContent(/un vendedor paga más que la casa de subastas.*recibirías 4p.*un vendedor paga 5p/i)
   })
 })

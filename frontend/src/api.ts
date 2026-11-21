@@ -1,3 +1,5 @@
+import type { Lang } from './i18n'
+
 /** One auction house: a market whose prices are addressed by id (the `realm` query parameter). */
 export interface House {
   id: number
@@ -49,18 +51,21 @@ export interface Category {
 /** When a market's prices were last updated (ISO, UTC); null before its first snapshot. */
 export const fetchStatus = (realm: number) => getJSON<{ updatedAt: string | null }>(`/api/status?realm=${realm}`)
 
-export const fetchCategories = (realm: number) => getJSON<Category[]>(`/api/categories?realm=${realm}`)
+/** `lang` is the language of the names; English, the default, adds nothing to the address. */
+export const fetchCategories = (realm: number, lang: Lang = 'en') =>
+  getJSON<Category[]>(`/api/categories?realm=${realm}${lang === 'es' ? '&lang=es' : ''}`)
 
 /** How results are ordered: the server's default (by name, or the most listed when browsing), or the highest first by price or by units sold (low or high estimate). */
 export type Sort = '' | 'price' | 'sold-low' | 'sold-high'
 
 /** By name, within a category, or both. Only a category browses what is on sale, the most listed first. */
-export const searchItems = (q: string, realm: number, category?: number, sort: Sort = '') => {
+export const searchItems = (q: string, realm: number, category?: number, sort: Sort = '', lang: Lang = 'en') => {
   const params = [
     q ? `q=${encodeURIComponent(q)}` : '',
     `realm=${realm}`,
     category !== undefined ? `category=${category}` : '',
     sort ? `sort=${sort}` : '',
+    lang === 'es' ? 'lang=es' : '',
   ]
   return getJSON<ItemSummary[]>(`/api/items?${params.filter(Boolean).join('&')}`)
 }

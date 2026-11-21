@@ -1,5 +1,6 @@
 import { useId, useState } from 'react'
-import { formatMoney } from './format'
+import { formatCount, formatMoney } from './format'
+import { useI18n } from './i18nContext'
 import type { Point } from './api'
 
 // Kept narrow so the text stays readable when the chart shrinks on a phone.
@@ -16,8 +17,10 @@ interface Props {
 
 export function PriceChart({ points, timeZone }: Props) {
   const descId = useId()
+  const { lang, t } = useI18n()
   const [active, setActive] = useState<number | null>(null)
-  if (points.length === 0) return <p className="muted">No price history yet.</p>
+  if (points.length === 0) return <p className="muted">{t('noHistory')}</p>
+  const money = (copper: number) => formatMoney(copper, lang)
 
   const n = points.length
   const times = points.map((p) => new Date(p.time).getTime())
@@ -34,10 +37,11 @@ export function PriceChart({ points, timeZone }: Props) {
   const line = (pick: (p: Point) => number) => points.map((p, i) => `${xs[i]},${y(pick(p))}`).join(' ')
 
   const intraday = t1 - t0 < INTRADAY_MS
+  const dateLocale = lang === 'es' ? 'es-ES' : 'en-GB' // both write the time on a 24 hour clock
   const fmtTime = (iso: string) =>
-    new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone })
+    new Date(iso).toLocaleTimeString(dateLocale, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone })
   const fmtDate = (iso: string) =>
-    new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone })
+    new Date(iso).toLocaleDateString(dateLocale, { day: 'numeric', month: 'short', timeZone })
   const axisLabel = intraday ? fmtTime : fmtDate
 
   // Up to five labels, one near each quarter of the time span (so gaps in the data do not bunch
@@ -53,9 +57,12 @@ export function PriceChart({ points, timeZone }: Props) {
   const current = points[shown]
 
   const mins = points.map((p) => p.min)
-  const summary =
-    `Lowest price from ${formatMoney(Math.min(...mins))} to ${formatMoney(Math.max(...mins))} ` +
-    `across ${n} snapshots, latest ${formatMoney(points[n - 1].min)}.`
+  const summary = t('chartSummary', {
+    from: money(Math.min(...mins)),
+    to: money(Math.max(...mins)),
+    n,
+    latest: money(points[n - 1].min),
+  })
 
   const onPointer = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -85,7 +92,7 @@ export function PriceChart({ points, timeZone }: Props) {
     <figure
       className="chart"
       tabIndex={0}
-      aria-label="Price history. Use the left and right arrow keys to read each snapshot."
+      aria-label={t('chartFigure')}
       onKeyDown={onKeyDown}
     >
       <p id={descId} className="sr-only">
@@ -94,7 +101,7 @@ export function PriceChart({ points, timeZone }: Props) {
       <svg
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label="Price history"
+        aria-label={t('chartTitle')}
         aria-describedby={descId}
         width="100%"
         style={{ touchAction: 'pan-y' }}
@@ -106,11 +113,11 @@ export function PriceChart({ points, timeZone }: Props) {
         {hi !== lo && <line x1={PAD.left} x2={W - PAD.right} y1={y(lo)} y2={y(lo)} stroke="var(--border)" />}
 
         <text x={PAD.left - 6} y={y(hi)} textAnchor="end" dominantBaseline="middle" fontSize="14" fill="currentColor">
-          {formatMoney(hi)}
+          {money(hi)}
         </text>
         {hi !== lo && (
           <text x={PAD.left - 6} y={y(lo)} textAnchor="end" dominantBaseline="middle" fontSize="14" fill="currentColor">
-            {formatMoney(lo)}
+            {money(lo)}
           </text>
         )}
 
@@ -129,7 +136,7 @@ export function PriceChart({ points, timeZone }: Props) {
 
         <line x1={xs[shown]} x2={xs[shown]} y1={PAD.top} y2={H - PAD.bottom} stroke="var(--border)" />
         <polyline
-          aria-label="Median price"
+          aria-label={t('medianPrice')}
           points={line((p) => p.median)}
           fill="none"
           stroke="var(--muted)"
@@ -137,7 +144,7 @@ export function PriceChart({ points, timeZone }: Props) {
           strokeWidth="2"
         />
         <polyline
-          aria-label="Lowest price"
+          aria-label={t('lowestPrice')}
           points={line((p) => p.min)}
           fill="none"
           stroke="var(--accent)"
@@ -164,13 +171,13 @@ export function PriceChart({ points, timeZone }: Props) {
           {fmtDate(current.time)}, {fmtTime(current.time)}
         </strong>
         {' — '}
-        Lowest {formatMoney(current.min)}, median {formatMoney(current.median)}, {current.quantity} listed
+        {t('readout', { min: money(current.min), median: money(current.median), n: formatCount(current.quantity, lang) })}
       </p>
 
       <figcaption>
-        <span className="key key-lowest" aria-hidden="true" /> Lowest price
-        <span className="key key-median" aria-hidden="true" /> Median price
-        {intraday && <span className="tz">Times in {timeZone ?? 'your local time'}</span>}
+        <span className="key key-lowest" aria-hidden="true" /> {t('lowestPrice')}
+        <span className="key key-median" aria-hidden="true" /> {t('medianPrice')}
+        {intraday && <span className="tz">{t('timesIn', { zone: timeZone ?? t('localTime') })}</span>}
       </figcaption>
     </figure>
   )

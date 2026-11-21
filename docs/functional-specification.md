@@ -80,6 +80,7 @@ One user: a Forever player on a Mac who wants to watch prices.
 | FR-3.13 | The main header (the page title) is a link that returns to the front page: it clears the search, category, sort and open item and keeps the chosen market. | ✅ |
 | FR-3.14 | The page has its own emblem, shown beside the title and as the browser tab icon. It is original artwork, not a Blizzard or WoW mark. | ✅ |
 | FR-3.15 | Item and category names can be served in Spanish (Spain) on request. A search then matches the Spanish and the English name, and an item with no Spanish name yet keeps its English one. | ✅ |
+| FR-3.16 | The whole page can be used in **English or Spanish (Spain)**: labels, messages, insights, demand text, chart text and notes, plus numbers, percentages ("12,3 %"), dates and times, and the coin letters (oro, plata, cobre). A two-button toggle in the header shows both languages, each named in itself, and marks the current one. The first visit follows the browser (any Spanish gives Spanish, anything else English); a choice is remembered and wins afterwards. Changing language reloads the item and category names without closing the open item, and sets the page language and title. | ✅ |
 | FR-3.6 | The ruleset, faction, search, category, sort order and item are kept in the address, so a view can be shared and reloaded. An unknown market falls back to the first one. | ✅ |
 | FR-3.7 | Loading, empty and error states are shown; the page says when no market has data yet. | ✅ |
 | FR-3.8 | Keyboard focus moves to the item heading when an item is picked. | ✅ |

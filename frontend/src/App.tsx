@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchCategories, fetchHistory, fetchInsights, fetchRealms, fetchStatus, searchItems } from './api'
 import type { Category, Insights, ItemSummary, Point, Realm, Sort } from './api'
-import { formatAgo, formatClock, formatSold } from './format'
+import { formatAgo, formatClock, formatCount, formatSold } from './format'
+import { I18nProvider } from './I18nProvider'
+import { LanguageSwitch } from './LanguageSwitch'
+import { initialLang, saveLang } from './i18n'
+import { useI18n } from './i18nContext'
+import type { Key, Lang } from './i18n'
 import { Money } from './Money'
 import { InsightsPanel } from './InsightsPanel'
 import { PriceChart } from './PriceChart'
-import { factionLabel, realmOfMarket } from './realms'
+import { factionKey, realmOfMarket } from './realms'
 
-const ERROR = 'Something went wrong. Please try again.'
 // [days of history, label]: hourly snapshots make the 24 hour view the natural default.
-const RANGES: [number, string][] = [
-  [1, '24 hours'],
-  [7, '7 days'],
-  [30, '30 days'],
+const RANGES: [number, Key][] = [
+  [1, 'range24h'],
+  [7, 'range7d'],
+  [30, 'range30d'],
 ]
 const SEARCH_DELAY_MS = 300
 const MIN_QUERY_LENGTH = 2
@@ -24,8 +28,6 @@ interface Props {
   pollMs?: number // how often to check for newer prices
   now?: () => number // the clock, replaceable in tests
 }
-
-const count = (n?: number) => (n === undefined ? '' : n.toLocaleString('en-US')) // older servers do not report sales
 
 interface SortHeaderProps {
   label: string
@@ -46,7 +48,21 @@ function SortHeader({ label, hint, column, sort, onSort }: SortHeaderProps) {
   )
 }
 
-export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
+export function App(props: Props = {}) {
+  const [lang, setLang] = useState<Lang>(initialLang)
+  const change = useCallback((next: Lang) => {
+    setLang(next)
+    saveLang(next)
+  }, [])
+  return (
+    <I18nProvider lang={lang} setLang={change}>
+      <Page {...props} />
+    </I18nProvider>
+  )
+}
+
+function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
+  const { lang, t } = useI18n()
   // The address carries realm, search and item so a view can be shared or reloaded.
   const [initial] = useState(() => new URLSearchParams(window.location.search))
   const [realms, setRealms] = useState<Realm[]>([])
@@ -128,7 +144,7 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
   useEffect(() => {
     if (realm === undefined) return
     let stale = false
-    fetchCategories(realm)
+    fetchCategories(realm, lang)
       .then((list) => {
         if (stale) return
         setCategories(list)
@@ -138,7 +154,7 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
     return () => {
       stale = true
     }
-  }, [realm, refreshKey])
+  }, [realm, refreshKey, lang])
 
   useEffect(() => {
     if (selectedId === undefined || realm === undefined) return
@@ -164,21 +180,21 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
     }
   }, [selectedId, realm, refreshKey])
 
-  // Reload the results on screen (a search or a browse) when newer prices arrive, without clearing them
-  // or the selected item. An answer that arrives after the user started something new is ignored.
+  // Reload the results on screen (a search or a browse) when newer prices arrive or the language changes,
+  // without clearing them or the selected item. An answer that arrives after the user started something
+  // new is ignored.
   useEffect(() => {
-    if (refreshKey === 0) return
     const q = lastQuery.current
     if (!q || q.realm !== realmRef.current) return
     const seq = searchSeq.current
-    searchItems(q.text, q.realm, q.category, q.sort)
+    searchItems(q.text, q.realm, q.category, q.sort, lang)
       .then((found) => {
         if (seq !== searchSeq.current) return
         setResults(found)
         setSelected((prev) => (prev ? (found.find((i) => i.id === prev.id) ?? prev) : prev))
       })
       .catch(() => {}) // keep what is on screen
-  }, [refreshKey])
+  }, [refreshKey, lang])
 
   // Keyboard and screen reader users land on the details they just asked for.
   useEffect(() => {
@@ -212,7 +228,7 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
     setSelected(undefined)
     setResults(undefined)
     setSearching(true)
-    searchItems(q, realmId, categoryId, order)
+    searchItems(q, realmId, categoryId, order, lang)
       .then((found) => {
         if (!current()) return
         setResults(found)
@@ -222,7 +238,7 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
       })
       .catch(() => current() && setError(true))
       .finally(() => current() && setSearching(false))
-  }, [])
+  }, [lang])
 
   // A name needs a couple of letters; a category alone browses what is on sale in it.
   const typed = query.trim()
@@ -282,6 +298,12 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
     setSelected(undefined)
   }, [])
 
+  // The page tells the browser (and screen readers) which language it is in.
+  useEffect(() => {
+    document.documentElement.lang = lang
+    document.title = t('title')
+  }, [lang, t])
+
   // Escape closes the details, unless it is meant for a field (it clears a search box). So does a click
   // outside them; one on an item is left alone because it switches to that item, and the focus stays
   // wherever the user clicked.
@@ -292,7 +314,7 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
       if (e.key === 'Escape' && !['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) closeDetails()
     }
     const onPointer = (e: PointerEvent) => {
-      if (!(e.target as HTMLElement).closest('.details, .result')) setSelected(undefined)
+      if (!(e.target as HTMLElement).closest('.details, .result, .lang-switch')) setSelected(undefined)
     }
     window.addEventListener('keydown', onKey)
     document.addEventListener('pointerdown', onPointer)
@@ -313,25 +335,26 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
   return (
     <div className="page">
       <header>
+        <LanguageSwitch />
         <h1>
           <a href="/" onClick={goHome}>
             <img src="/logo.svg" alt="" width={56} height={56} className="emblem" />
-            WoW Auction Prices
+            {t('title')}
           </a>
         </h1>
         {updatedAt && (
           <p className="updated">
-            Prices updated {formatClock(updatedAt)} · {formatAgo(clock - Date.parse(updatedAt))}
+            {t('updated', { time: formatClock(updatedAt, lang), ago: formatAgo(clock - Date.parse(updatedAt), lang) })}
           </p>
         )}
-        <p className="muted">Price history and buy/sell signals, net of the auction house cut.</p>
+        <p className="muted">{t('tagline')}</p>
       </header>
 
       <main>
         <form onSubmit={submit} className="card search">
           {realms.length > 1 && (
             <label className="field">
-              <span>Ruleset</span>
+              <span>{t('ruleset')}</span>
               <select
                 value={currentRealm?.id ?? ''}
                 onChange={(e) => {
@@ -349,11 +372,11 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
           )}
           {currentHouses.length > 1 && (
             <label className="field">
-              <span>Faction</span>
+              <span>{t('faction')}</span>
               <select value={realm} onChange={(e) => changeRealm(Number(e.target.value))}>
                 {currentHouses.map((h) => (
                   <option key={h.id} value={h.id}>
-                    {factionLabel(h.faction)}
+                    {factionKey(h.faction) ? t(factionKey(h.faction)!) : h.faction}
                   </option>
                 ))}
               </select>
@@ -361,9 +384,9 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
           )}
           {categories.length > 0 && (
             <label className="field">
-              <span>Category</span>
+              <span>{t('category')}</span>
               <select value={category ?? ALL_CATEGORIES} onChange={(e) => changeCategory(e.target.value)}>
-                <option value={ALL_CATEGORIES}>All categories</option>
+                <option value={ALL_CATEGORIES}>{t('allCategories')}</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -373,82 +396,77 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
             </label>
           )}
           <label className="field grow">
-            <span>Search items</span>
+            <span>{t('searchItems')}</span>
             <input
               type="search"
               value={query}
-              placeholder="e.g. linen cloth"
+              placeholder={t('searchPlaceholder')}
               autoComplete="off"
               onChange={(e) => setQuery(e.target.value)}
             />
           </label>
           <button type="submit" className="primary" disabled={realm === undefined}>
-            Search
+            {t('search')}
           </button>
         </form>
 
         {error && (
           <p role="alert" className="alert">
-            {ERROR}
+            {t('error')}
           </p>
         )}
 
         <div className="layout">
           <div className="list">
             {realmsLoaded && realms.length === 0 && (
-              <p className="muted hint">
-                No auction data yet. The tracker keeps checking, and rulesets appear here as soon as Blizzard serves
-                their auctions.
-              </p>
+              <p className="muted hint">{t('noData')}</p>
             )}
             {!(realmsLoaded && realms.length === 0) && !results && !searching && !error && (
-              <section className="hero" aria-label="Welcome">
-                <h2>Find your fortune in Azeroth</h2>
-                <p>
-                  Search for an item to see its price history, e.g. “linen cloth”, or pick a category to browse.
-                </p>
+              <section className="hero" aria-label={t('welcome')}>
+                <h2>{t('heroTitle')}</h2>
+                <p>{t('heroText')}</p>
                 {categories.length > 0 && (
                   <>
-                    <ul className="shortcuts" aria-label="Browse by category">
+                    <ul className="shortcuts" aria-label={t('browseByCategory')}>
                       {[...categories]
                         .sort((a, b) => (b.soldHigh ?? 0) - (a.soldHigh ?? 0) || a.name.localeCompare(b.name))
                         .map((c) => (
                           <li key={c.id}>
                             <button type="button" onClick={() => setCategory(c.id)}>
                               <span>{c.name}</span>
-                              <span className="sold">{formatSold(c.soldLow, c.soldHigh)}</span>
+                              <span className="sold">{formatSold(c.soldLow, c.soldHigh, lang)}</span>
                             </button>
                           </li>
                         ))}
                     </ul>
-                    <p className="small muted">Categories are ranked by units sold in the last 7 days.</p>
+                    <p className="small muted">{t('categoriesRanked')}</p>
                   </>
                 )}
               </section>
             )}
-            {searching && <p className="muted hint">Searching…</p>}
-            {results && results.length === 0 && <p className="muted hint">No items found. Try another name.</p>}
+            {searching && <p className="muted hint">{t('searching')}</p>}
+            {results && results.length === 0 && <p className="muted hint">{t('noItems')}</p>}
             {results && results.length > 0 && searchText === '' && category !== undefined && sort === '' && (
               <p className="muted small">
-                Most listed in {categories.find((c) => c.id === category)?.name ?? 'this category'}
+                {t('mostListedIn', { name: categories.find((c) => c.id === category)?.name ?? t('thisCategory') })}
               </p>
             )}
             {results && results.length > 0 && (
               <table className="results">
                 <thead>
                   <tr>
-                    <th scope="col">Item</th>
-                    <SortHeader label="Price" column="price" sort={sort} onSort={toggleSort} />
+                    <th scope="col">{t('colItem')}</th>
+                    <SortHeader label={t('colPrice')} column="price" sort={sort} onSort={toggleSort} />
                     <SortHeader
-                      label="Sold low"
-                      hint="Units sold in the last 7 days that cannot have simply expired"
+                      label={t('colSoldLow')}
+                      hint={t('hintSoldLow')}
                       column="sold-low"
                       sort={sort}
                       onSort={toggleSort}
                     />
                     <SortHeader
-                      label="Sold high"
-                      hint="Every unit that left in the last 7 days, including listings that may have expired"
+                      label={t('colSoldHigh')}
+                      hint={t('hintSoldHigh')}
                       column="sold-high"
                       sort={sort}
                       onSort={toggleSort}
@@ -472,8 +490,8 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
                         </button>
                       </td>
                       <td className="num price"><Money copper={item.min} /></td>
-                      <td className="num">{count(item.soldLow)}</td>
-                      <td className="num">{count(item.soldHigh)}</td>
+                      <td className="num">{item.soldLow === undefined ? '' : formatCount(item.soldLow, lang)}</td>
+                      <td className="num">{item.soldHigh === undefined ? '' : formatCount(item.soldHigh, lang)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -482,8 +500,8 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
           </div>
 
           {selected && (
-            <section className="card details" aria-label={`${selected.name} details`}>
-              <button type="button" className="close" aria-label="Close details" onClick={closeDetails}>
+            <section className="card details" aria-label={t('detailsOf', { name: selected.name })}>
+              <button type="button" className="close" aria-label={t('closeDetails')} onClick={closeDetails}>
                 ✕
               </button>
               <h2 ref={heading} tabIndex={-1}>
@@ -491,29 +509,26 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
                 {selected.name}
               </h2>
               <p className="now">
-                <span className="muted">Lowest now</span> <strong><Money copper={selected.min} /></strong>
+                <span className="muted">{t('lowestNow')}</span> <strong><Money copper={selected.min} /></strong>
               </p>
 
               {currentInsights && <InsightsPanel insights={currentInsights} />}
 
-              <div role="group" aria-label="Time range" className="range">
+              <div role="group" aria-label={t('timeRange')} className="range">
                 {RANGES.map(([d, label]) => (
                   <button key={d} type="button" aria-pressed={days === d} onClick={() => setDays(d)}>
-                    {label}
+                    {t(label)}
                   </button>
                 ))}
               </div>
-              {points ? <PriceChart points={points} /> : <p className="muted">Loading price history…</p>}
+              {points ? <PriceChart points={points} /> : <p className="muted">{t('loadingHistory')}</p>}
             </section>
           )}
         </div>
       </main>
 
       <footer>
-        <p>
-          Data provided by Blizzard Entertainment. This site is not affiliated with or endorsed by Blizzard
-          Entertainment.
-        </p>
+        <p>{t('footer')}</p>
       </footer>
     </div>
   )

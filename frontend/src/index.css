@@ -246,3 +246,19 @@ footer { margin-top: 32px; font-size: 0.8125rem; color: var(--muted); }
   background-image: url(https://render.worldofwarcraft.com/forever-eu/icons/56/inv_misc_coin_05.jpg),
     radial-gradient(circle at 35% 30%, #ffd2b0, #c8763c 55%, #7a3a14);
 }
+
+/* Language toggle: a segmented control in the corner of the header */
+header { position: relative; }
+.lang-switch {
+  position: absolute; top: 12px; right: 0; display: inline-flex; padding: 2px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
+}
+.lang-switch button {
+  min-height: 36px; min-width: 44px; padding: 0 12px; font-size: 0.875rem;
+  color: var(--muted); background: none; border: 0; border-radius: 999px;
+}
+.lang-switch button:hover { color: var(--text); }
+.lang-switch button[aria-pressed='true'] { color: var(--accent-text); background: var(--accent); font-weight: 600; cursor: default; }
+@media (max-width: 560px) {
+  .lang-switch { position: static; margin: 0 auto 8px; }
+}

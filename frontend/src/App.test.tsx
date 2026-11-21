@@ -76,7 +76,10 @@ function mockApi(routes: Routes = {}) {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   window.history.replaceState(null, '', '/')
+  localStorage.clear()
+  document.documentElement.lang = ''
 })
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -88,7 +91,7 @@ async function renderApp(routes: Routes = {}) {
   const calls = mockApi(routes)
   const user = userEvent.setup()
   render(<App />)
-  await screen.findByLabelText(/^faction$/i) // the realms have loaded
+  await screen.findByLabelText(/^(faction|facción)$/i) // the realms have loaded
   return { user, calls }
 }
 
@@ -950,5 +953,145 @@ describe('the main header', () => {
     calls.length = 0
     await sleep(500)
     expect(calls.filter((c) => c.startsWith('/api/items?'))).toEqual([])
+  })
+})
+
+describe('Spanish', () => {
+  const lino = { id: 7, name: 'Paño de lino', icon: '', min: 123456, median: 150000, quantity: 80, soldLow: 12, soldHigh: 18 }
+  const categoriasEs = [
+    { id: 4, name: 'Armadura', soldLow: 10, soldHigh: 20 },
+    { id: 7, name: 'Objeto comerciable', soldLow: 100, soldHigh: 150 },
+  ]
+  const spanishRoutes = {
+    '/api/categories?realm=110&lang=es': categoriasEs,
+    '/api/items?q=lino&realm=110&lang=es': [lino],
+    '/api/items?realm=110&category=7&lang=es': [lino],
+  }
+
+  // both choices are always on screen, each named in its own language
+  const languageButton = (name: 'English' | 'Español') => screen.getByRole('button', { name })
+
+  const browserLanguages = (...languages: string[]) => vi.spyOn(window.navigator, 'languages', 'get').mockReturnValue(languages)
+
+  it('is what a Spanish browser gets, with the page language set', async () => {
+    browserLanguages('es-ES', 'en')
+    await renderApp(spanishRoutes)
+    expect(await screen.findByRole('heading', { level: 2, name: /encuentra tu fortuna en azeroth/i })).toBeInTheDocument()
+    expect(within(screen.getByRole('group', { name: /^idioma$/i })).getByRole('button', { name: 'Español' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('link', { name: /precios de subastas de wow/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/buscar objetos/i)).toHaveAttribute('placeholder', 'p. ej., paño de lino')
+    expect(screen.getByText(/datos proporcionados por blizzard/i)).toBeInTheDocument()
+    await waitFor(() => expect(document.documentElement.lang).toBe('es'))
+  })
+
+  it('is English for any other browser', async () => {
+    browserLanguages('fr-FR')
+    await renderApp()
+    expect(await screen.findByRole('heading', { level: 2, name: /find your fortune in azeroth/i })).toBeInTheDocument()
+    expect(languageButton('English')).toHaveAttribute('aria-pressed', 'true')
+    expect(languageButton('Español')).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('can be chosen from the header, and is remembered for the next visit', async () => {
+    const { user } = await renderApp(spanishRoutes)
+    await user.click(languageButton('Español'))
+    expect(await screen.findByRole('heading', { level: 2, name: /encuentra tu fortuna/i })).toBeInTheDocument()
+    expect(localStorage.getItem('lang')).toBe('es')
+    expect(document.documentElement.lang).toBe('es')
+
+    await user.click(languageButton('English'))
+    expect(await screen.findByRole('heading', { level: 2, name: /find your fortune/i })).toBeInTheDocument()
+    expect(localStorage.getItem('lang')).toBe('en')
+  })
+
+  it('offers both languages at once, each named in its own language, in a labelled group', async () => {
+    await renderApp()
+    const group = await screen.findByRole('group', { name: /^language$/i })
+    expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['English', 'Español'])
+    expect(languageButton('Español')).toHaveAttribute('lang', 'es')
+    expect(screen.queryByRole('combobox', { name: /language|idioma/i })).not.toBeInTheDocument()
+  })
+
+  it('does nothing when the language already shown is pressed', async () => {
+    const { user } = await renderApp()
+    await user.click(languageButton('English'))
+    expect(localStorage.getItem('lang')).toBeNull()
+  })
+
+  it('beats the browser language once chosen', async () => {
+    localStorage.setItem('lang', 'en')
+    browserLanguages('es-ES')
+    await renderApp()
+    expect(await screen.findByRole('heading', { level: 2, name: /find your fortune/i })).toBeInTheDocument()
+  })
+
+  it('asks the server for Spanish names and lists the categories in Spanish', async () => {
+    localStorage.setItem('lang', 'es')
+    const { user, calls } = await renderApp(spanishRoutes)
+    const shortcuts = await screen.findByRole('list', { name: /explorar por categoría/i })
+    expect(calls).toContain('/api/categories?realm=110&lang=es')
+    expect(within(shortcuts).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Objeto comerciable100–150 vendidas',
+      'Armadura10–20 vendidas',
+    ])
+    await user.type(screen.getByLabelText(/buscar objetos/i), 'lino')
+    expect(await screen.findByRole('button', { name: /paño de lino/i })).toBeInTheDocument()
+    expect(calls).toContain('/api/items?q=lino&realm=110&lang=es')
+  })
+
+  it('shows the table, the prices and the details in Spanish', async () => {
+    localStorage.setItem('lang', 'es')
+    const { user } = await renderApp({
+      ...spanishRoutes,
+      '/api/items/7/history?realm=110&days=1': history,
+      '/api/items/7/insights?realm=110': { ...insights, demand: null },
+    })
+    await user.type(screen.getByLabelText(/buscar objetos/i), 'lino')
+    const item = await screen.findByRole('button', { name: /paño de lino/i })
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Objeto', 'Precio', 'Vendidas (mín.)', 'Vendidas (máx.)'])
+    expect(item.closest('tr')).toHaveTextContent('12o 34p 56c') // oro, plata, cobre
+    await user.click(item)
+    const details = await screen.findByRole('region', { name: /detalles de paño de lino/i })
+    expect(within(details).getByText(/más barato ahora/i)).toBeInTheDocument()
+    expect(await within(details).findByText(/buen momento para comprar/i)).toBeInTheDocument()
+    expect(within(details).getByRole('button', { name: /cerrar detalles/i })).toBeInTheDocument()
+    expect(within(details).getByRole('group', { name: /intervalo de tiempo/i })).toBeInTheDocument()
+    expect(within(details).getByRole('button', { name: '7 días' })).toBeInTheDocument()
+  })
+
+  it('reloads the results in the new language without closing the open item', async () => {
+    const { user, calls } = await renderApp({
+      ...spanishRoutes,
+      '/api/items/7/history?realm=110&days=1': history,
+      '/api/items/7/insights?realm=110': insights,
+    })
+    await search(user)
+    await user.click(await screen.findByRole('button', { name: /linen cloth/i }))
+    await screen.findByRole('region', { name: /linen cloth details/i })
+    await user.click(languageButton('Español'))
+    await waitFor(() => expect(calls).toContain('/api/items?q=linen&realm=110&lang=es'))
+    // there is no Spanish route for "linen": the reload fails and what is on screen stays
+    expect(screen.getByRole('region', { name: /details|detalles/i })).toBeInTheDocument()
+  })
+
+  it('moves the open item to its Spanish name when the language changes', async () => {
+    const { user } = await renderApp({
+      '/api/categories?realm=110&lang=es': categoriasEs,
+      '/api/items?q=linen&realm=110&lang=es': [{ ...lino, id: 7 }],
+      '/api/items/7/history?realm=110&days=1': history,
+      '/api/items/7/insights?realm=110': insights,
+    })
+    await search(user)
+    await user.click(await screen.findByRole('button', { name: /linen cloth/i }))
+    await screen.findByRole('region', { name: /linen cloth details/i })
+    await user.click(languageButton('Español'))
+    expect(await screen.findByRole('region', { name: /detalles de paño de lino/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /paño de lino/i })).toBeInTheDocument()
+  })
+
+  it('says when the prices were updated in Spanish', async () => {
+    localStorage.setItem('lang', 'es')
+    await renderApp(spanishRoutes)
+    expect(await screen.findByText(/precios actualizados a las/i)).toHaveTextContent(formatClock(UPDATED, 'es'))
   })
 })
