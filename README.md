@@ -114,6 +114,11 @@ go run ./cmd/server
 A new database starts empty: search works right away, but charts and buy/sell labels need a day or so of hourly
 snapshots before they say anything (the label stays "Not enough history yet" until about 24 snapshots).
 
+## Documentation
+
+- [Functional specification](docs/functional-specification.md): what the system does, as numbered requirements.
+- [Design specification](docs/design-specification.md): how it is built, the data model, interfaces and decision log.
+
 ## Tests
 
 ```sh
