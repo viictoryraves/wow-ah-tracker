@@ -1,4 +1,6 @@
-import { formatMoney, formatPct } from './format'
+import type { ReactNode } from 'react'
+import { formatPct } from './format'
+import { Money } from './Money'
 import type { Demand, DemandLevel, Insights, Verdict } from './api'
 
 const LABELS: Record<Verdict, string> = {
@@ -27,7 +29,7 @@ type Tone = 'positive' | 'negative' | 'neutral'
 const toneOf = (n: number): Tone => (n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral')
 
 // The tone only adds colour; the sign in the value already carries the meaning.
-function Row({ label, value, tone }: { label: string; value: string; tone?: Tone }) {
+function Row({ label, value, tone }: { label: string; value: ReactNode; tone?: Tone }) {
   return (
     <div className="row" data-tone={tone}>
       <span>{label}</span>
@@ -90,7 +92,7 @@ export function InsightsPanel({ insights: i }: { insights: Insights }) {
         <span aria-hidden="true">{ICONS[i.verdict]}</span> {LABELS[i.verdict]}
       </p>
 
-      <Row label="Market value" value={formatMoney(i.marketValue)} />
+      <Row label="Market value" value={<Money copper={i.marketValue} />} />
       <Row label="Lowest vs market value" value={formatPct(i.vsMarketPct)} />
       <Row label="Cheaper than" value={`${Math.round(i.cheaperThanPct)}% of recent prices`} />
       <Row label="Change (1 day)" value={formatPct(i.change1dPct)} />
@@ -101,28 +103,33 @@ export function InsightsPanel({ insights: i }: { insights: Insights }) {
 
       <section aria-label={`After the ${cut} auction house cut`} className="fees">
         <h3>After the {cut} auction house cut</h3>
-        <Row label="You get per unit selling at market value" value={formatMoney(i.netAtMarket)} />
+        <Row label="You get per unit selling at market value" value={<Money copper={i.netAtMarket} />} />
         <Row
           label={commodity ? 'Match the lowest price: you get per unit' : 'Price near the market: you get per unit'}
-          value={formatMoney(i.netAtListPrice)}
+          value={<Money copper={i.netAtListPrice} />}
         />
         <p className="muted small">
           {commodity
             ? 'Orders fill cheapest first and a tie sells the newest listing first, so matching the lowest puts your stack in front; undercutting by 1c only loses money.'
             : 'One cheap listing is not the market: price against the wall of listings, not the lowest one.'}
         </p>
-        <Row label="Break-even listing price if you buy at the lowest" value={formatMoney(i.breakEvenPrice)} />
+        <Row label="Break-even listing price if you buy at the lowest" value={<Money copper={i.breakEvenPrice} />} />
         <Row
           label="Flip margin per unit (buy lowest, sell at market)"
           tone={toneOf(i.flipMargin)}
-          value={`${i.flipMargin < 0 ? '-' : ''}${formatMoney(Math.abs(i.flipMargin))} (${formatPct(i.flipMarginPct)})`}
+          value={
+            <>
+              {i.flipMargin < 0 && '-'}
+              <Money copper={Math.abs(i.flipMargin)} /> ({formatPct(i.flipMarginPct)})
+            </>
+          }
         />
-        {i.vendorSell !== null && i.vendorSell > 0 && <Row label="Vendor pays" value={formatMoney(i.vendorSell)} />}
+        {i.vendorSell !== null && i.vendorSell > 0 && <Row label="Vendor pays" value={<Money copper={i.vendorSell} />} />}
         {i.vendorSell === 0 && <p className="muted small">Vendors do not buy this item.</p>}
         {i.belowVendor && i.vendorSell !== null && (
           <p role="note" className="vendor-note">
-            A vendor pays more than the auction house would: after the cut you would get {formatMoney(i.netAtListPrice)}
-            , a vendor pays {formatMoney(i.vendorSell)}. Sell it to a vendor.
+            A vendor pays more than the auction house would: after the cut you would get <Money copper={i.netAtListPrice} />
+            , a vendor pays <Money copper={i.vendorSell} />. Sell it to a vendor.
           </p>
         )}
         <p className="muted small">Gold from sales arrives by mail, up to about an hour later.</p>
@@ -132,7 +139,11 @@ export function InsightsPanel({ insights: i }: { insights: Insights }) {
         <section aria-label="Deposit if the auction expires" className="deposit">
           <h3>Deposit if the auction expires (estimate)</h3>
           {i.deposits.map((d) => (
-            <Row key={d.hours} label={`${d.hours} hours`} value={`${formatMoney(d.amount)} per item`} />
+            <Row key={d.hours} label={`${d.hours} hours`} value={
+              <>
+                <Money copper={d.amount} /> per item
+              </>
+            } />
           ))}
           <p className="muted small">
             Refunded if it sells, lost if it expires or you cancel. An estimate from the Classic rule (vendor price ×

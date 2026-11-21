@@ -27,12 +27,14 @@ const realms = [pvp, normal]
 const UPDATED = '2026-11-21T10:22:56Z' // when the default market's prices were last updated
 
 const categories = [
-  { id: 4, name: 'Armor' },
-  { id: 0, name: 'Consumable' },
-  { id: 7, name: 'Trade Goods' },
+  { id: 4, name: 'Armor', soldLow: 10, soldHigh: 20 },
+  { id: 0, name: 'Consumable', soldLow: 0, soldHigh: 0 },
+  { id: 7, name: 'Trade Goods', soldLow: 100, soldHigh: 150 },
 ]
 
-const linen = { id: 7, name: 'Linen Cloth', icon: 'https://icons/linen.jpg', min: 12345, median: 15000, quantity: 80 }
+const linen = {
+  id: 7, name: 'Linen Cloth', icon: 'https://icons/linen.jpg', min: 12345, median: 15000, quantity: 80, soldLow: 12, soldHigh: 18,
+}
 const insights = {
   min: 12345, marketValue: 20000, vsMarketPct: -38.3, cheaperThanPct: 90, change1dPct: -2, change7dPct: 5,
   supplyVsAvgPct: 10, cutPercent: 5, netAtMarket: 19000, breakEvenPrice: 12995,
@@ -135,7 +137,7 @@ describe('rulesets and factions', () => {
     const { user, calls } = await renderApp({ '/api/items?q=linen&realm=113': [{ ...linen, min: 999 }] })
     await user.selectOptions(factionSelect(), '113') // Horde
     await user.type(screen.getByLabelText(/search items/i), 'linen')
-    expect(await screen.findByRole('button', { name: /linen cloth/i })).toHaveTextContent('9s 99c')
+    expect((await screen.findByRole('button', { name: /linen cloth/i })).closest('tr')).toHaveTextContent('9s 99c')
     expect(calls).toContain('/api/items?q=linen&realm=113')
     expect(calls).not.toContain('/api/items?q=linen&realm=110')
   })
@@ -151,7 +153,7 @@ describe('rulesets and factions', () => {
     await user.selectOptions(factionSelect(), '113')
     expect(screen.queryByRole('img', { name: /price history/i })).not.toBeInTheDocument()
     await waitFor(() => expect(calls).toContain('/api/items?q=linen&realm=113'))
-    expect(await screen.findByRole('button', { name: /linen cloth/i })).toHaveTextContent('9s 99c')
+    expect((await screen.findByRole('button', { name: /linen cloth/i })).closest('tr')).toHaveTextContent('9s 99c')
   })
 
   it('keeps the ruleset picker on the ruleset while the faction changes', async () => {
@@ -166,7 +168,7 @@ describe('rulesets and factions', () => {
     await user.selectOptions(rulesetSelect(), '2') // Normal
     expect(factionSelect()).toHaveValue('111') // its Alliance house
     await user.type(screen.getByLabelText(/search items/i), 'linen')
-    expect(await screen.findByRole('button', { name: /linen cloth/i })).toHaveTextContent('5s 55c')
+    expect((await screen.findByRole('button', { name: /linen cloth/i })).closest('tr')).toHaveTextContent('5s 55c')
   })
 })
 
@@ -178,12 +180,11 @@ describe('search', () => {
     await screen.findByLabelText(/^faction$/i)
   })
 
-  it('shows search results with the lowest price and quantity', async () => {
+  it('shows search results with the lowest price', async () => {
     const { user } = await renderApp()
     await search(user)
-    const result = await screen.findByRole('button', { name: /linen cloth/i })
+    const result = (await screen.findByRole('button', { name: /linen cloth/i })).closest('tr')
     expect(result).toHaveTextContent('1g 23s 45c')
-    expect(result).toHaveTextContent('80')
   })
 
   it('shows that a search is in progress, then the results', async () => {
@@ -278,7 +279,7 @@ describe('search', () => {
 
       await user.selectOptions(factionSelect(), '113')
       await waitFor(() => expect(calls).toContain('/api/items?q=linen&realm=113'))
-      expect(await screen.findByRole('button', { name: /linen cloth/i })).toHaveTextContent('9s 99c')
+      expect((await screen.findByRole('button', { name: /linen cloth/i })).closest('tr')).toHaveTextContent('9s 99c')
     })
   })
 })
@@ -441,8 +442,8 @@ describe('attribution', () => {
 
 describe('item categories', () => {
   const categorySelect = () => screen.getByLabelText(/^category$/i)
-  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800 }
-  const vest = { id: 8, name: 'Linen Vest', icon: '', min: 300, median: 315, quantity: 9 }
+  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2 }
+  const vest = { id: 8, name: 'Linen Vest', icon: '', min: 300, median: 315, quantity: 9, soldLow: 0, soldHigh: 0 }
 
   async function renderCategories(routes: Routes = {}) {
     const { user, calls } = await renderApp({
@@ -519,12 +520,12 @@ describe('item categories', () => {
     await screen.findAllByRole('button', { name: /cloth/i })
     await user.selectOptions(factionSelect(), '113')
     await waitFor(() => expect(calls).toContain('/api/items?realm=113&category=7'))
-    expect(await screen.findByRole('button', { name: /silk cloth/i })).toHaveTextContent('9s 99c')
+    expect((await screen.findByRole('button', { name: /silk cloth/i })).closest('tr')).toHaveTextContent('9s 99c')
     expect(categorySelect()).toHaveValue('7')
   })
 
   it('drops the category when the new house does not sell it', async () => {
-    const { user } = await renderCategories({ '/api/categories?realm=113': [{ id: 4, name: 'Armor' }] })
+    const { user } = await renderCategories({ '/api/categories?realm=113': [{ id: 4, name: 'Armor', soldLow: 0, soldHigh: 0 }] })
     await user.selectOptions(categorySelect(), '7')
     await screen.findAllByRole('button', { name: /cloth/i })
     await user.selectOptions(factionSelect(), '113')
@@ -675,7 +676,7 @@ describe('last update and automatic refresh', () => {
     let first = 'Silk Cloth'
     const { user } = await renderTimed({
       '/api/status?realm=110': () => new Response(JSON.stringify(status)),
-      '/api/items?realm=110&category=7': () => new Response(JSON.stringify([{ id: 9, name: first, icon: '', min: 150, median: 160, quantity: 800 }])),
+      '/api/items?realm=110&category=7': () => new Response(JSON.stringify([{ id: 9, name: first, icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2 }])),
     })
     await user.selectOptions(await screen.findByLabelText(/^category$/i), '7') // the categories load after the page
     expect(await screen.findByRole('button', { name: /silk cloth/i })).toBeInTheDocument()
@@ -702,5 +703,245 @@ describe('last update and automatic refresh', () => {
     const after = calls.length
     await sleep(200)
     expect(calls.length).toBe(after)
+  })
+})
+
+describe('sorting results', () => {
+  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2 }
+  const header = (name: RegExp) => screen.getByRole('columnheader', { name })
+  const firstItem = () => within(screen.getAllByRole('row')[1]).getAllByRole('button')[0]
+
+  async function searchLinen(routes: Routes = {}) {
+    const ctx = await renderApp(routes)
+    await ctx.user.type(await screen.findByLabelText(/search items/i), 'linen')
+    await screen.findByRole('button', { name: /linen cloth/i })
+    return ctx
+  }
+
+  it('shows the results as a table with three values: the price and the units sold, low and high', async () => {
+    await searchLinen()
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Item', 'Price', 'Sold low', 'Sold high'])
+    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell')
+    expect(cells[1]).toHaveTextContent('1g 23s 45c')
+    expect(cells[2]).toHaveTextContent('12')
+    expect(cells[3]).toHaveTextContent('18')
+  })
+
+  it('has no sort dropdown: the three value headers sort', async () => {
+    await searchLinen()
+    expect(screen.queryByLabelText(/^sort by$/i)).not.toBeInTheDocument()
+    expect(header(/price/i)).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('sorts by the clicked header, asking the server, and marks the column', async () => {
+    const { user, calls } = await searchLinen({
+      '/api/items?q=linen&realm=110&sort=price': [silk, linen],
+      '/api/items?q=linen&realm=110&sort=sold-low': [linen, silk],
+      '/api/items?q=linen&realm=110&sort=sold-high': [silk, linen],
+    })
+    await user.click(within(header(/price/i)).getByRole('button'))
+    await waitFor(() => expect(calls).toContain('/api/items?q=linen&realm=110&sort=price'))
+    await waitFor(() => expect(firstItem()).toHaveTextContent('Silk Cloth'))
+    expect(header(/price/i)).toHaveAttribute('aria-sort', 'descending')
+
+    await user.click(within(header(/sold low/i)).getByRole('button'))
+    await waitFor(() => expect(firstItem()).toHaveTextContent('Linen Cloth'))
+    expect(header(/sold low/i)).toHaveAttribute('aria-sort', 'descending')
+    expect(header(/price/i)).toHaveAttribute('aria-sort', 'none')
+
+    await user.click(within(header(/sold high/i)).getByRole('button'))
+    await waitFor(() => expect(firstItem()).toHaveTextContent('Silk Cloth'))
+    expect(header(/sold high/i)).toHaveAttribute('aria-sort', 'descending')
+    expect(header(/sold low/i)).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('goes back to the default order when the sorted header is clicked again', async () => {
+    const { user, calls } = await searchLinen({ '/api/items?q=linen&realm=110&sort=price': [silk, linen] })
+    await user.click(within(header(/price/i)).getByRole('button'))
+    await waitFor(() => expect(firstItem()).toHaveTextContent('Silk Cloth')) // the sorted results have arrived
+    calls.length = 0
+    await user.click(within(header(/price/i)).getByRole('button'))
+    await waitFor(() => expect(header(/price/i)).toHaveAttribute('aria-sort', 'none'))
+    await waitFor(() => expect(calls.filter((c) => c.startsWith('/api/items?'))).toEqual(['/api/items?q=linen&realm=110']))
+  })
+
+  it('keeps the order in the address and restores it on reload', async () => {
+    window.history.replaceState(null, '', '/?realm=110&category=7&sort=sold-high')
+    const { calls } = await renderApp({ '/api/items?realm=110&category=7&sort=sold-high': [linen, silk] })
+    await screen.findByRole('button', { name: /silk cloth/i })
+    expect(calls).toContain('/api/items?realm=110&category=7&sort=sold-high')
+    expect(header(/sold high/i)).toHaveAttribute('aria-sort', 'descending')
+    expect(new URLSearchParams(window.location.search).get('sort')).toBe('sold-high')
+  })
+})
+
+describe('front page', () => {
+  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2 }
+
+  it('welcomes the visitor and says how to start, before anything is searched', async () => {
+    await renderApp()
+    expect(await screen.findByRole('heading', { level: 2, name: /azeroth/i })).toBeInTheDocument()
+    expect(screen.getByText(/search for an item/i)).toBeInTheDocument()
+  })
+
+  it('offers each category as a shortcut that browses it', async () => {
+    const { user, calls } = await renderApp({ '/api/items?realm=110&category=7': [silk] })
+    const shortcuts = await screen.findByRole('list', { name: /browse by category/i })
+    await user.click(within(shortcuts).getByRole('button', { name: /^trade goods/i }))
+    await waitFor(() => expect(calls).toContain('/api/items?realm=110&category=7'))
+    expect(await screen.findByRole('button', { name: /silk cloth/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/^category$/i)).toHaveValue('7')
+  })
+
+  it('lists the categories by how much they sell, with the units sold in the last 7 days', async () => {
+    await renderApp()
+    const shortcuts = await screen.findByRole('list', { name: /browse by category/i })
+    expect(within(shortcuts).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Trade Goods100–150 sold',
+      'Armor10–20 sold',
+      'Consumable0 sold',
+    ])
+    expect(screen.getByText(/units sold in the last 7 days/i)).toBeInTheDocument()
+  })
+
+  it('gives way to the results once there are some', async () => {
+    const { user } = await renderApp()
+    await user.type(await screen.findByLabelText(/search items/i), 'linen')
+    await screen.findByRole('button', { name: /linen cloth/i })
+    expect(screen.queryByRole('heading', { level: 2, name: /azeroth/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('a server that does not report sales yet', () => {
+  const { soldLow, soldHigh, ...bare } = linen
+  void soldLow
+  void soldHigh
+
+  it('still shows the front page and the results, without the sold figures', async () => {
+    const { user } = await renderApp({
+      '/api/categories?realm=110': categories.map(({ id, name }) => ({ id, name })),
+      '/api/items?q=linen&realm=110': [bare],
+    })
+    const shortcuts = await screen.findByRole('list', { name: /browse by category/i })
+    expect(within(shortcuts).getAllByRole('button')).toHaveLength(3)
+    await user.type(screen.getByLabelText(/search items/i), 'linen')
+    const row = (await screen.findByRole('button', { name: /linen cloth/i })).closest('tr')
+    expect(row).toHaveTextContent('1g 23s 45c')
+    expect(row).not.toHaveTextContent(/sold/i)
+  })
+})
+
+describe('closing the details', () => {
+  async function openLinen() {
+    const ctx = await renderApp()
+    await search(ctx.user)
+    const item = await screen.findByRole('button', { name: /linen cloth/i })
+    await ctx.user.click(item)
+    await screen.findByRole('region', { name: /linen cloth details/i })
+    return { ...ctx, item }
+  }
+
+  it('has a close button that hides the details but keeps the results', async () => {
+    const { user } = await openLinen()
+    await user.click(screen.getByRole('button', { name: /close details/i }))
+    expect(screen.queryByRole('region', { name: /linen cloth details/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /linen cloth/i })).not.toHaveAttribute('aria-current')
+    expect(new URLSearchParams(window.location.search).get('item')).toBeNull()
+  })
+
+  it('gives the focus back to the item that was open', async () => {
+    const { user, item } = await openLinen()
+    await user.click(screen.getByRole('button', { name: /close details/i }))
+    expect(item).toHaveFocus()
+  })
+
+  it('closes with the Escape key', async () => {
+    const { user } = await openLinen()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('region', { name: /linen cloth details/i })).not.toBeInTheDocument()
+  })
+
+  it('closes when the user clicks outside of it', async () => {
+    const { user } = await openLinen()
+    await user.click(screen.getByRole('heading', { level: 1 }))
+    expect(screen.queryByRole('region', { name: /linen cloth details/i })).not.toBeInTheDocument()
+  })
+
+  it('does not steal the focus from what was clicked outside', async () => {
+    const { user } = await openLinen()
+    await user.click(screen.getByLabelText(/search items/i))
+    expect(screen.queryByRole('region', { name: /linen cloth details/i })).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/search items/i)).toHaveFocus()
+  })
+
+  it('stays open when the user clicks inside it', async () => {
+    const { user } = await openLinen()
+    const details = screen.getByRole('region', { name: /linen cloth details/i })
+    await user.click(within(details).getByRole('button', { name: /^7 days$/i }))
+    await user.click(within(details).getByRole('heading', { name: /linen cloth/i }))
+    expect(screen.getByRole('region', { name: /linen cloth details/i })).toBeInTheDocument()
+  })
+
+  it('switches to another item instead of closing when one is clicked', async () => {
+    const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2 }
+    const ctx = await renderApp({
+      '/api/items?q=cloth&realm=110': [linen, silk],
+      '/api/items/9/history?realm=110&days=1': history,
+      '/api/items/9/insights?realm=110': insights,
+    })
+    await search(ctx.user, 'cloth')
+    await ctx.user.click(await screen.findByRole('button', { name: /linen cloth/i }))
+    await ctx.user.click(screen.getByRole('button', { name: /silk cloth/i }))
+    expect(await screen.findByRole('region', { name: /silk cloth details/i })).toBeInTheDocument()
+  })
+})
+
+
+describe('the main header', () => {
+  const homeLink = () => screen.getByRole('link', { name: /wow auction prices/i })
+
+  it('brings the user back to the front page from a search with an item open', async () => {
+    const { user } = await renderApp({ '/api/items?q=linen&realm=110&sort=price': [linen] })
+    await search(user)
+    await user.click(await screen.findByRole('button', { name: /linen cloth/i }))
+    await screen.findByRole('region', { name: /linen cloth details/i })
+    await user.click(within(screen.getByRole('columnheader', { name: /price/i })).getByRole('button'))
+
+    await user.click(homeLink())
+
+    expect(await screen.findByRole('heading', { level: 2, name: /azeroth/i })).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: /linen cloth details/i })).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/search items/i)).toHaveValue('')
+    expect(screen.getByLabelText(/^category$/i)).toHaveValue('all')
+    await waitFor(() => expect(window.location.search).toBe('?realm=110'))
+  })
+
+  it('also leaves a category being browsed', async () => {
+    const { user } = await renderApp({ '/api/items?realm=110&category=7': [linen] })
+    await user.selectOptions(await screen.findByLabelText(/^category$/i), '7')
+    await screen.findByRole('table')
+    await user.click(homeLink())
+    expect(await screen.findByRole('heading', { level: 2, name: /azeroth/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/^category$/i)).toHaveValue('all')
+  })
+
+  it('keeps the chosen faction', async () => {
+    const { user } = await renderApp({ '/api/categories?realm=113': categories, '/api/status?realm=113': { updatedAt: UPDATED } })
+    await user.selectOptions(screen.getByLabelText(/^faction$/i), '113')
+    await waitFor(() => expect(window.location.search).toContain('realm=113'))
+    await user.click(homeLink())
+    expect(screen.getByLabelText(/^faction$/i)).toHaveValue('113')
+  })
+
+  it('does not search again by itself once back on the front page', async () => {
+    const { user, calls } = await renderApp()
+    await search(user)
+    await screen.findByRole('table')
+    await user.click(homeLink())
+    await screen.findByRole('heading', { level: 2, name: /azeroth/i })
+    calls.length = 0
+    await sleep(500)
+    expect(calls.filter((c) => c.startsWith('/api/items?'))).toEqual([])
   })
 })

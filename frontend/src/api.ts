@@ -18,6 +18,8 @@ export interface ItemSummary {
   min: number
   median: number
   quantity: number
+  soldLow?: number // units sold or cancelled in the last 7 days; absent from a server that predates them
+  soldHigh?: number // every unit that left in the last 7 days
 }
 
 export interface Point {
@@ -40,6 +42,8 @@ export const fetchRealms = () => getJSON<Realm[]>('/api/realms')
 export interface Category {
   id: number // 0 is a real category (Consumable)
   name: string
+  soldLow?: number // units sold in the category in the last 7 days (low estimate); absent from an older server
+  soldHigh?: number // (high estimate)
 }
 
 /** When a market's prices were last updated (ISO, UTC); null before its first snapshot. */
@@ -47,12 +51,16 @@ export const fetchStatus = (realm: number) => getJSON<{ updatedAt: string | null
 
 export const fetchCategories = (realm: number) => getJSON<Category[]>(`/api/categories?realm=${realm}`)
 
+/** How results are ordered: the server's default (by name, or the most listed when browsing), or the highest first by price or by units sold (low or high estimate). */
+export type Sort = '' | 'price' | 'sold-low' | 'sold-high'
+
 /** By name, within a category, or both. Only a category browses what is on sale, the most listed first. */
-export const searchItems = (q: string, realm: number, category?: number) => {
+export const searchItems = (q: string, realm: number, category?: number, sort: Sort = '') => {
   const params = [
     q ? `q=${encodeURIComponent(q)}` : '',
     `realm=${realm}`,
     category !== undefined ? `category=${category}` : '',
+    sort ? `sort=${sort}` : '',
   ]
   return getJSON<ItemSummary[]>(`/api/items?${params.filter(Boolean).join('&')}`)
 }

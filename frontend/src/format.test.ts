@@ -1,4 +1,4 @@
-import { formatAgo, formatClock, formatMoney, formatPct } from './format'
+import { formatAgo, formatSold, formatClock, formatMoney, formatPct } from './format'
 
 describe('formatMoney', () => {
   it('splits copper into gold, silver and copper', () => {
@@ -61,5 +61,16 @@ describe('formatClock', () => {
     const d = new Date(iso)
     expect(formatClock(iso)).toBe(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
     expect(formatClock(iso)).toMatch(/\d{1,2}[:.]\d{2}/)
+  })
+})
+
+describe('formatSold', () => {
+  it('shows a range, or one number when the estimates agree', () => {
+    expect(formatSold(12, 18)).toBe('12–18 sold')
+    expect(formatSold(7, 7)).toBe('7 sold')
+    expect(formatSold(0, 0)).toBe('0 sold')
+  })
+  it('groups thousands', () => {
+    expect(formatSold(1200, 3400)).toBe('1,200–3,400 sold')
   })
 })

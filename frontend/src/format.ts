@@ -31,3 +31,10 @@ export function formatAgo(ms: number): string {
   if (hours < 24) return `${hours} h ago`
   return `${Math.floor(hours / 24)} d ago`
 }
+
+/** Units sold in a window as an estimate: a range, or one number when the low and high agree. */
+export function formatSold(low?: number, high?: number): string {
+  if (low === undefined || high === undefined) return '' // an older server does not report sales
+  const n = (v: number) => v.toLocaleString('en-US')
+  return `${low === high ? n(low) : `${n(low)}–${n(high)}`} sold`
+}

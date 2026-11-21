@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchCategories, fetchHistory, fetchInsights, fetchRealms, fetchStatus, searchItems } from './api'
-import type { Category, Insights, ItemSummary, Point, Realm } from './api'
-import { formatAgo, formatClock, formatMoney } from './format'
+import type { Category, Insights, ItemSummary, Point, Realm, Sort } from './api'
+import { formatAgo, formatClock, formatSold } from './format'
+import { Money } from './Money'
 import { InsightsPanel } from './InsightsPanel'
 import { PriceChart } from './PriceChart'
 import { factionLabel, realmOfMarket } from './realms'
@@ -16,11 +17,33 @@ const RANGES: [number, string][] = [
 const SEARCH_DELAY_MS = 300
 const MIN_QUERY_LENGTH = 2
 const ALL_CATEGORIES = 'all'
+const SORTS: Sort[] = ['price', 'sold-low', 'sold-high']
 const STATUS_POLL_MS = 30_000 // how often to ask whether newer prices were published
 
 interface Props {
   pollMs?: number // how often to check for newer prices
   now?: () => number // the clock, replaceable in tests
+}
+
+const count = (n?: number) => (n === undefined ? '' : n.toLocaleString('en-US')) // older servers do not report sales
+
+interface SortHeaderProps {
+  label: string
+  hint?: string
+  column: Sort
+  sort: Sort
+  onSort: (column: Sort) => void
+}
+
+/** A column header that sorts the results by its column. */
+function SortHeader({ label, hint, column, sort, onSort }: SortHeaderProps) {
+  return (
+    <th scope="col" className="num" aria-sort={sort === column ? 'descending' : 'none'}>
+      <button type="button" className="sort" title={hint} onClick={() => onSort(column)}>
+        {label}
+      </button>
+    </th>
+  )
 }
 
 export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
@@ -37,6 +60,10 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
     const wanted = initial.get('category')
     return wanted !== null && wanted !== '' && !Number.isNaN(Number(wanted)) ? Number(wanted) : undefined
   })
+  const [sort, setSort] = useState<Sort>(() => {
+    const wanted = initial.get('sort')
+    return SORTS.find((value) => value === wanted) ?? ''
+  })
   const [selected, setSelected] = useState<ItemSummary>()
   const [days, setDays] = useState(1)
   const [history, setHistory] = useState<{ key: string; points: Point[] }>()
@@ -46,7 +73,7 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
   const pendingItem = useRef(Number(initial.get('item')) || undefined) // item to reselect after the first search
   const lastSearch = useRef('')
   const searchSeq = useRef(0)
-  const lastQuery = useRef<{ text: string; realm: number; category?: number } | undefined>(undefined) // what the results on screen came from
+  const lastQuery = useRef<{ text: string; realm: number; category?: number; sort: Sort } | undefined>(undefined) // what the results on screen came from
   const nowRef = useRef(now)
   const realmRef = useRef<number | undefined>(realm)
   useEffect(() => {
@@ -144,7 +171,7 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
     const q = lastQuery.current
     if (!q || q.realm !== realmRef.current) return
     const seq = searchSeq.current
-    searchItems(q.text, q.realm, q.category)
+    searchItems(q.text, q.realm, q.category, q.sort)
       .then((found) => {
         if (seq !== searchSeq.current) return
         setResults(found)
@@ -176,16 +203,16 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
   const currentHouses = currentRealm?.houses ?? []
 
   // Answers to older searches are ignored, so a slow one cannot overwrite a newer one.
-  const runSearch = useCallback((q: string, realmId: number, categoryId?: number) => {
-    lastSearch.current = `${realmId}|${q}|${categoryId ?? ''}`
-    lastQuery.current = { text: q, realm: realmId, category: categoryId }
+  const runSearch = useCallback((q: string, realmId: number, categoryId: number | undefined, order: Sort) => {
+    lastSearch.current = `${realmId}|${q}|${categoryId ?? ''}|${order}`
+    lastQuery.current = { text: q, realm: realmId, category: categoryId, sort: order }
     const seq = ++searchSeq.current
     const current = () => seq === searchSeq.current
     setError(false)
     setSelected(undefined)
     setResults(undefined)
     setSearching(true)
-    searchItems(q, realmId, categoryId)
+    searchItems(q, realmId, categoryId, order)
       .then((found) => {
         if (!current()) return
         setResults(found)
@@ -205,46 +232,92 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
   // Search as the user types (or browse once a category is chosen), when they pause.
   useEffect(() => {
     if (!canSearch || realm === undefined) return
-    const key = `${realm}|${searchText}|${category ?? ''}`
+    const key = `${realm}|${searchText}|${category ?? ''}|${sort}`
     if (lastSearch.current === key) return
     const timer = setTimeout(() => {
-      if (lastSearch.current !== key) runSearch(searchText, realm, category) // the Search button may have run it meanwhile
+      if (lastSearch.current !== key) runSearch(searchText, realm, category, sort) // the Search button may have run it meanwhile
     }, SEARCH_DELAY_MS)
     return () => clearTimeout(timer)
-  }, [canSearch, searchText, category, realm, runSearch])
+  }, [canSearch, searchText, category, sort, realm, runSearch])
 
   useEffect(() => {
     if (realm === undefined) return
     const params = new URLSearchParams({ realm: String(realm) })
     if (typed) params.set('q', typed)
     if (category !== undefined) params.set('category', String(category))
+    if (sort) params.set('sort', sort)
     if (selected) params.set('item', String(selected.id))
     window.history.replaceState(null, '', `?${params}`)
-  }, [realm, typed, category, selected])
+  }, [realm, typed, category, sort, selected])
+
+  // Forget the results on screen and any search still in flight, back to the guidance.
+  const clearResults = () => {
+    searchSeq.current++
+    lastSearch.current = ''
+    lastQuery.current = undefined
+    setSearching(false)
+    setResults(undefined)
+    setSelected(undefined)
+  }
 
   const changeCategory = (value: string) => {
     const next = value === ALL_CATEGORIES ? undefined : Number(value)
     setCategory(next)
-    if (next === undefined && searchText === '') {
-      // nothing left to search or browse: back to the guidance
-      searchSeq.current++
-      lastSearch.current = ''
-      lastQuery.current = undefined
-      setSearching(false)
-      setResults(undefined)
-      setSelected(undefined)
-    }
+    if (next === undefined && searchText === '') clearResults() // nothing left to search or browse
   }
+
+  // The main header goes back to the front page: no search, category, sort or item, on the same market.
+  const goHome = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setQuery('')
+    setCategory(undefined)
+    setSort('')
+    setError(false)
+    clearResults()
+  }
+
+  // Close the details and put the focus back on the item that was open, so keyboard users keep their place.
+  const closeDetails = useCallback(() => {
+    document.querySelector<HTMLElement>('.result[aria-current="true"]')?.focus()
+    setSelected(undefined)
+  }, [])
+
+  // Escape closes the details, unless it is meant for a field (it clears a search box). So does a click
+  // outside them; one on an item is left alone because it switches to that item, and the focus stays
+  // wherever the user clicked.
+  useEffect(() => {
+    if (selectedId === undefined) return
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      if (e.key === 'Escape' && !['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) closeDetails()
+    }
+    const onPointer = (e: PointerEvent) => {
+      if (!(e.target as HTMLElement).closest('.details, .result')) setSelected(undefined)
+    }
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onPointer)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onPointer)
+    }
+  }, [selectedId, closeDetails])
+
+  // Clicking a column sorts by it, highest first; clicking it again goes back to the default order.
+  const toggleSort = (column: Sort) => setSort((current) => (current === column ? '' : column))
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    if ((typed || category !== undefined) && realm !== undefined) runSearch(typed, realm, category)
+    if ((typed || category !== undefined) && realm !== undefined) runSearch(typed, realm, category, sort)
   }
 
   return (
     <div className="page">
       <header>
-        <h1>WoW Auction Prices</h1>
+        <h1>
+          <a href="/" onClick={goHome}>
+            WoW Auction Prices
+          </a>
+        </h1>
         {updatedAt && (
           <p className="updated">
             Prices updated {formatClock(updatedAt)} · {formatAgo(clock - Date.parse(updatedAt))}
@@ -328,48 +401,96 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
               </p>
             )}
             {!(realmsLoaded && realms.length === 0) && !results && !searching && !error && (
-              <p className="muted hint">
-                Search for an item to see its price history, e.g. “linen cloth”, or pick a category to browse.
-              </p>
+              <section className="hero" aria-label="Welcome">
+                <h2>Find your fortune in Azeroth</h2>
+                <p>
+                  Search for an item to see its price history, e.g. “linen cloth”, or pick a category to browse.
+                </p>
+                {categories.length > 0 && (
+                  <>
+                    <ul className="shortcuts" aria-label="Browse by category">
+                      {[...categories]
+                        .sort((a, b) => (b.soldHigh ?? 0) - (a.soldHigh ?? 0) || a.name.localeCompare(b.name))
+                        .map((c) => (
+                          <li key={c.id}>
+                            <button type="button" onClick={() => setCategory(c.id)}>
+                              <span>{c.name}</span>
+                              <span className="sold">{formatSold(c.soldLow, c.soldHigh)}</span>
+                            </button>
+                          </li>
+                        ))}
+                    </ul>
+                    <p className="small muted">Categories are ranked by units sold in the last 7 days.</p>
+                  </>
+                )}
+              </section>
             )}
             {searching && <p className="muted hint">Searching…</p>}
             {results && results.length === 0 && <p className="muted hint">No items found. Try another name.</p>}
-            {results && results.length > 0 && searchText === '' && category !== undefined && (
+            {results && results.length > 0 && searchText === '' && category !== undefined && sort === '' && (
               <p className="muted small">
                 Most listed in {categories.find((c) => c.id === category)?.name ?? 'this category'}
               </p>
             )}
             {results && results.length > 0 && (
-              <ul className="results">
-                {results.map((item) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      className="result"
-                      aria-current={selected?.id === item.id ? 'true' : undefined}
-                      onClick={() => setSelected(item)}
-                    >
-                      {item.icon && (
-                        <img src={item.icon} alt="" width={36} height={36} loading="lazy" className="icon" />
-                      )}
-                      <span className="name">{item.name}</span>
-                      <span className="price">{formatMoney(item.min)}</span>
-                      <span className="muted qty">{item.quantity} listed</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <table className="results">
+                <thead>
+                  <tr>
+                    <th scope="col">Item</th>
+                    <SortHeader label="Price" column="price" sort={sort} onSort={toggleSort} />
+                    <SortHeader
+                      label="Sold low"
+                      hint="Units sold in the last 7 days that cannot have simply expired"
+                      column="sold-low"
+                      sort={sort}
+                      onSort={toggleSort}
+                    />
+                    <SortHeader
+                      label="Sold high"
+                      hint="Every unit that left in the last 7 days, including listings that may have expired"
+                      column="sold-high"
+                      sort={sort}
+                      onSort={toggleSort}
+                    />
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((item) => (
+                    <tr key={item.id}>
+                      <td>
+                        <button
+                          type="button"
+                          className="result"
+                          aria-current={selected?.id === item.id ? 'true' : undefined}
+                          onClick={() => setSelected(item)}
+                        >
+                          {item.icon && (
+                            <img src={item.icon} alt="" width={28} height={28} loading="lazy" className="icon" />
+                          )}
+                          <span className="name">{item.name}</span>
+                        </button>
+                      </td>
+                      <td className="num price"><Money copper={item.min} /></td>
+                      <td className="num">{count(item.soldLow)}</td>
+                      <td className="num">{count(item.soldHigh)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
 
           {selected && (
             <section className="card details" aria-label={`${selected.name} details`}>
+              <button type="button" className="close" aria-label="Close details" onClick={closeDetails}>
+                ✕
+              </button>
               <h2 ref={heading} tabIndex={-1}>
                 {selected.icon && <img src={selected.icon} alt="" width={36} height={36} className="icon" />}
                 {selected.name}
               </h2>
               <p className="now">
-                <span className="muted">Lowest now</span> <strong>{formatMoney(selected.min)}</strong>
+                <span className="muted">Lowest now</span> <strong><Money copper={selected.min} /></strong>
               </p>
 
               {currentInsights && <InsightsPanel insights={currentInsights} />}

@@ -172,15 +172,31 @@ never through a shell.
 - **State:** `App` owns the market (`realm` = house id), the search text, category, results, selected item, range, and
   the status. Data for the selected item is keyed (`id:market:days`) so stale data is never shown while a new one loads.
 - **Search:** a 300 ms debounce, two-letter minimum, a sequence counter that discards late answers, and a key of
-  `market|text|category` so the Search button and the debounce never run the same search twice.
-- **Address:** `?realm=&q=&category=&item=` is written with `replaceState` and read once at start.
+  `market|text|category|sort` so the Search button and the debounce never run the same search twice.
+- **Address:** `?realm=&q=&category=&sort=&item=` is written with `replaceState` and read once at start.
 - **Freshness:** a 30 s poll of `/api/status`; the first reading of a market is a baseline, a different `updatedAt`
   bumps a refresh counter that re-runs the history, insights and categories effects and a results refresh that
   replaces results without clearing them. Effects depend on the selected item's **id**, so a refresh neither refetches
   twice nor steals focus.
 - **Chart:** hand-written SVG (no library): 480×260 viewBox, five time labels chosen by time (not by index) on real
   snapshots, a marker per snapshot up to 72, pointer and keyboard readout, text description for screen readers.
-- **Styling:** one stylesheet, CSS variables, light/dark by `prefers-color-scheme`, 44 px targets, focus outlines,
+- **Results table:** a real `<table>`; the Price and Sold headers are buttons with `aria-sort` that toggle `sort`
+  (`price`, `sold-low`, `sold-high` or none) and so re-run the search; the arrow is drawn by CSS.
+- **Home:** the title is an `<a href="/">` whose click handler clears query, category, sort, results and selection
+  (`clearResults` also drops any search still in flight) and keeps the market.
+- **Details panel:** `closeDetails` refocuses the open `.result` button, then clears the selection (which also drops
+  `item` from the address); a window `keydown` listener for Escape and a document `pointerdown` listener (ignoring targets inside `.details`
+  or `.result`, and not moving focus) are installed only while an item is selected. In the
+  two-column layout the panel is `sticky` with `max-height: 100vh - 32px` and its own `overflow-y`.
+- **Prices:** the `Money` component splits copper into g/s/c and draws a `.coin` span per part, with the unit letter in
+  `sr-only` text. The coins are Blizzard's `inv_misc_coin_01/03/05` icons from `render.worldofwarcraft.com` (the host
+  that already serves the item icons), as CSS backgrounds over a CSS-drawn coin that shows while they load or if they
+  fail. Chart labels and sentences keep the plain text `formatMoney`.
+- **Front page:** the empty state is a `hero` section (welcome plus category shortcuts ranked by units sold, each calling `setCategory`);
+  the debounced search then browses it. It renders under the same condition as the old guidance text.
+- **Look:** a World of Warcraft mood in plain CSS: dark stone with ember gold by default, parchment in light mode, a
+  serif display face from the system stack. No Blizzard logos, artwork or web fonts are used or loaded.
+- **Styling:** one stylesheet, CSS variables, dark (default) and parchment light by `prefers-color-scheme`, 44 px targets, focus outlines,
   a two-column layout from 900 px.
 
 ## 6. Configuration (environment variables, `backend/.env`)

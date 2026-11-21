@@ -1,38 +1,45 @@
 :root {
-  color-scheme: light dark;
-  --bg: #f4f6f9;
-  --surface: #ffffff;
-  --text: #1b1f27;
-  --muted: #5b6472;
-  --border: #d5dae1;
-  --accent: #1f5fc4;
-  --accent-text: #ffffff;
-  --good: #0f7a54;
-  --good-bg: #e3f5ed;
-  --sell: #1f5fc4;
-  --sell-bg: #e6eefb;
-  --bad: #b3261e;
-  --bad-bg: #fbeae9;
-  --neutral-bg: #eceff3;
-  --radius: 10px;
+  color-scheme: dark light;
+  /* Azeroth by night: cold stone and ember gold. */
+  --bg: #0b0e14;
+  --bg-glow: #1a2236;
+  --surface: #141a26;
+  --text: #ece4d0;
+  --muted: #a3a08f;
+  --border: #33394a;
+  --gold: #f0b429;
+  --accent: #f0b429;
+  --accent-text: #1a1206;
+  --good: #5fd39a;
+  --good-bg: #12301f;
+  --sell: #7db2ff;
+  --sell-bg: #14233d;
+  --bad: #ff8a80;
+  --bad-bg: #3a1a18;
+  --neutral-bg: #1e2433;
+  --radius: 8px;
+  --display: Palatino, 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
 }
 
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --bg: #0e131a;
-    --surface: #171d27;
-    --text: #e8ecf2;
-    --muted: #9aa5b4;
-    --border: #2b3441;
-    --accent: #6aa5ff;
-    --accent-text: #08111f;
-    --good: #43d19e;
-    --good-bg: #123325;
-    --sell: #7db2ff;
-    --sell-bg: #14233d;
-    --bad: #ff8a80;
-    --bad-bg: #3a1a18;
-    --neutral-bg: #212a36;
+    /* The same world on parchment. */
+    --bg: #efe3c6;
+    --bg-glow: #f8efd8;
+    --surface: #f9f2de;
+    --text: #2a1d0d;
+    --muted: #6a5a43;
+    --border: #c4b08a;
+    --gold: #8a5a00;
+    --accent: #8a5a00;
+    --accent-text: #fffaf0;
+    --good: #0f6b45;
+    --good-bg: #dcefd9;
+    --sell: #1f4f9c;
+    --sell-bg: #dde6f5;
+    --bad: #a3231b;
+    --bad-bg: #f6dcd6;
+    --neutral-bg: #e6d9b8;
   }
 }
 
@@ -40,15 +47,22 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: radial-gradient(ellipse 120% 60% at 50% -10%, var(--bg-glow), var(--bg) 70%) no-repeat, var(--bg);
+  min-height: 100vh;
   color: var(--text);
   font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
 .page { max-width: 760px; margin: 0 auto; padding: 16px; }
-header h1 { margin: 8px 0 0; font-size: 1.6rem; line-height: 1.2; }
+header { padding: 16px 0 4px; text-align: center; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+header h1 {
+  margin: 8px 0 0; font: 700 2rem/1.15 var(--display); letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--gold); text-shadow: 0 2px 12px color-mix(in srgb, var(--gold) 35%, transparent);
+}
 header p { margin: 4px 0 16px; }
-h2 { margin: 0 0 4px; font-size: 1.3rem; }
+header h1 a { color: inherit; text-decoration: none; }
+header h1 a:hover { text-decoration: underline; text-underline-offset: 0.15em; }
+h2 { margin: 0 0 4px; font: 700 1.3rem var(--display); letter-spacing: 0.02em; }
 h2:focus { outline: none; }
 h3 { margin: 0 0 8px; font-size: 1rem; }
 
@@ -64,6 +78,7 @@ h3 { margin: 0 0 8px; font-size: 1rem; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--gold) 10%, transparent), 0 8px 24px rgb(0 0 0 / 0.25);
 }
 
 /* Search form */
@@ -88,7 +103,8 @@ button {
   border-radius: 8px;
   cursor: pointer;
 }
-button:hover { border-color: var(--accent); }
+button:hover { border-color: var(--accent); color: var(--accent); }
+button.primary:hover { color: var(--accent-text); filter: brightness(1.1); }
 button.primary { color: var(--accent-text); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
@@ -102,7 +118,7 @@ button.primary { color: var(--accent-text); background: var(--accent); border-co
 @media (min-width: 900px) {
   .page { max-width: 1100px; }
   .layout { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 16px; align-items: start; }
-  .layout .details { position: sticky; top: 16px; margin-top: 12px; }
+  .layout .details { position: sticky; top: 16px; margin-top: 12px; max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain; }
   .layout .list:only-child { grid-column: 1 / -1; }
 }
 
@@ -113,25 +129,40 @@ button.primary { color: var(--accent-text); background: var(--accent); border-co
   border: 1px solid var(--bad); border-radius: 8px;
 }
 
-/* Results */
-.results { list-style: none; margin: 12px 0; padding: 0; display: grid; gap: 8px; }
-.result {
-  width: 100%; min-height: 56px; padding: 8px 16px;
-  display: grid; grid-template-columns: auto 1fr auto; column-gap: 12px; align-items: center;
-  text-align: left; background: var(--surface);
+/* Results: a table whose Price and Sold headers sort it */
+.results { width: 100%; margin: 12px 0; border-collapse: collapse; font-size: 0.9375rem; }
+.results th, .results td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.results thead th {
+  font: 600 0.75rem/1.2 system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); text-align: left; border-bottom: 1px solid var(--gold);
 }
-.result .icon { grid-column: 1; grid-row: 1 / span 2; }
-.result .name { font-weight: 600; grid-column: 2; }
-.result .price { grid-column: 3; grid-row: 1; font-variant-numeric: tabular-nums; font-weight: 600; }
-.result .qty { grid-column: 2 / -1; font-size: 0.8125rem; }
-/* without an icon the text starts at the left edge */
-.result:not(:has(.icon)) .name, .result:not(:has(.icon)) .qty { grid-column-start: 1; }
-.icon { border-radius: 6px; border: 1px solid var(--border); background: var(--bg); }
+.results .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.results .price { font-weight: 600; }
+.results button.sort {
+  min-height: 32px; padding: 0 4px; font: inherit; letter-spacing: inherit; text-transform: inherit;
+  color: inherit; background: none; border: 0; border-radius: 4px; cursor: pointer;
+}
+.results button.sort:hover { color: var(--accent); }
+.results th[aria-sort='descending'] { color: var(--gold); }
+.results th[aria-sort='descending'] button.sort::after { content: ' ▼'; font-size: 0.7em; }
+.result {
+  width: 100%; min-height: 44px; padding: 4px 8px;
+  display: flex; align-items: center; gap: 10px; text-align: left; border-color: transparent; background: none;
+}
+.result .name { font-weight: 600; }
+.icon { flex: none; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); }
 h2 .icon { vertical-align: middle; margin-right: 10px; }
-.result[aria-current='true'] { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
+.results tr:has(.result[aria-current='true']) { background: color-mix(in srgb, var(--gold) 10%, transparent); }
+.result[aria-current='true'] { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* Details */
-.details { margin-top: 12px; }
+.details { position: relative; margin-top: 12px; }
+.details h2 { padding-right: 48px; } /* room for the close button */
+.details .close {
+  position: absolute; top: 8px; right: 8px; width: 44px; padding: 0;
+  font-size: 1.1rem; line-height: 1; color: var(--muted); background: none; border-color: transparent;
+}
+.details .close:hover { color: var(--accent); border-color: var(--accent); }
 .now { margin: 0 0 12px; }
 .now strong { font-size: 1.25rem; font-variant-numeric: tabular-nums; }
 
@@ -180,3 +211,37 @@ footer { margin-top: 32px; font-size: 0.8125rem; color: var(--muted); }
 }
 
 .updated { margin: 2px 0 4px; font-size: 0.875rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Front page */
+.hero {
+  margin: 8px 0 24px; padding: 40px 20px 32px; text-align: center;
+  border: 1px solid var(--gold); border-radius: var(--radius);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--gold) 10%, var(--surface)), var(--surface));
+  box-shadow: inset 0 0 0 4px var(--surface), inset 0 0 0 5px color-mix(in srgb, var(--gold) 45%, transparent);
+}
+.hero h2 { font-size: clamp(1.5rem, 5vw, 2.2rem); color: var(--gold); line-height: 1.2; }
+.hero p { max-width: 36em; margin: 12px auto 24px; color: var(--muted); }
+.shortcuts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.shortcuts button { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 120px; padding: 6px 16px; }
+.shortcuts .sold { font: 0.75rem system-ui, sans-serif; letter-spacing: 0; color: var(--muted); }
+.shortcuts button { border-color: color-mix(in srgb, var(--gold) 55%, var(--border)); font-family: var(--display); letter-spacing: 0.03em; }
+
+/* Coins: Blizzard's own coin icons (the host that serves the item icons), over a CSS-drawn coin that
+   shows while they load or if they cannot be reached. */
+.money { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.coin {
+  display: inline-block; width: 1.15em; height: 1.15em; margin: 0 0.15em 0 0.15em; vertical-align: -0.25em;
+  border-radius: 3px; background-size: cover; background-position: center;
+}
+.coin[data-coin='gold'] {
+  background-image: url(https://render.worldofwarcraft.com/forever-eu/icons/56/inv_misc_coin_01.jpg),
+    radial-gradient(circle at 35% 30%, #fff1a8, #f0b429 55%, #a8700b);
+}
+.coin[data-coin='silver'] {
+  background-image: url(https://render.worldofwarcraft.com/forever-eu/icons/56/inv_misc_coin_03.jpg),
+    radial-gradient(circle at 35% 30%, #ffffff, #c4cad4 55%, #7d8594);
+}
+.coin[data-coin='copper'] {
+  background-image: url(https://render.worldofwarcraft.com/forever-eu/icons/56/inv_misc_coin_05.jpg),
+    radial-gradient(circle at 35% 30%, #ffd2b0, #c8763c 55%, #7a3a14);
+}
