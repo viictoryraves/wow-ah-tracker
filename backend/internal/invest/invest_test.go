@@ -19,7 +19,7 @@ func medians(n int, v int64) []int64 {
 func good(id int) Candidate {
 	return Candidate{
 		ItemID: id, TierUnits: 500, TierPrice: 1000, MarketValue: 2000, SalePrice: 2000, SoldUnits: 50, Listed: 100,
-		Medians: medians(48, 2000), SoldPerDayLow: 100, ObservedHours: 24,
+		Medians: medians(48, 2000), SoldPerDayLow: 100, ObservedHours: 24, HighDemand: true,
 	}
 }
 
@@ -254,5 +254,23 @@ func TestDaysToSellCountTheStockAheadOfYou(t *testing.T) {
 	p := Make(1_000_000, 5, []Candidate{c}).Picks[0]
 	if p.Units != 100 || !near(p.DaysToSell, 2) {
 		t.Errorf("units %d, days %.2f, want 100 units and 2 days (1 for the stock ahead, 1 for yours)", p.Units, p.DaysToSell)
+	}
+}
+
+func TestOnlyItemsInHighDemandAreEverPicked(t *testing.T) {
+	hot, cold := good(1), good(2)
+	cold.HighDemand = false
+	cold.MarketValue, cold.SalePrice, cold.Medians = 9000, 9000, medians(48, 9000) // a far better flip, but nobody is buying
+	plan := Make(10_000_000, 5, []Candidate{cold, hot})
+	if len(plan.Picks) != 1 || plan.Picks[0].ItemID != 1 {
+		t.Fatalf("picks %+v, want only the item in high demand", plan.Picks)
+	}
+}
+
+func TestAPickSaysHowManyUnitsTheMarketTakesADay(t *testing.T) {
+	c := good(1)
+	c.SoldPerDayLow = 137.4
+	if got := Make(1_000_000, 5, []Candidate{c}).Picks[0].SoldPerDay; !near(got, 137.4) {
+		t.Errorf("sold per day = %.1f, want 137.4", got)
 	}
 }

@@ -507,22 +507,41 @@ type Opportunity struct {
 	TierPrice int64 // their average price per unit
 }
 
+// candidateSellThrough is the share of an item's listed units that must sell per day, by a rough count, for it to
+// be a candidate. It is looser than the real test for high demand (insights.HighDemand, 30%, judged with the
+// average stock and the hours really observed), so that test is the one that decides and this only keeps the
+// shortlist from filling up with items nobody buys.
+const candidateSellThrough = 0.2
+
 // InvestmentCandidates lists up to limit named items on sale in the market's latest snapshot whose cheap tier
-// costs less than their median price after cutPercent, the ones with the most to gain (the profit per unit
-// times the units of the tier) first. Names come in Spanish when lang is "es" and the item has one.
-func (s *Store) InvestmentCandidates(houseID int, cutPercent float64, lang string, limit int) ([]Opportunity, error) {
+// costs less than their median price after cutPercent and that sell briskly (by the sales measured since the
+// given time), the ones with the most to gain (the profit per unit times the units of the tier) first. An item
+// with no measured sales is never a candidate. Names come in Spanish when lang is "es" and the item has one.
+func (s *Store) InvestmentCandidates(houseID int, cutPercent float64, lang string, since time.Time, limit int) ([]Opportunity, error) {
+	// one flow moment per hourly gap between snapshots: that many hours of sales were measured
+	var hours float64
+	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT ts) FROM flows WHERE house_id = ? AND ts >= ?`, houseID, since.Unix()).Scan(&hours); err != nil {
+		return nil, err
+	}
+	if hours < 1 {
+		return nil, nil
+	}
 	name := "i.name"
 	if lang == LangSpanish {
 		name = "COALESCE(NULLIF(i.name_es, ''), i.name)"
 	}
 	rows, err := s.db.Query(`
 		SELECT sn.item_id, `+name+`, COALESCE(i.icon, ''), sn.min, sn.median, sn.quantity, sn.cheap_qty, sn.cheap_avg
-		FROM snapshots sn JOIN items i ON i.id = sn.item_id
+		FROM snapshots sn
+		JOIN items i ON i.id = sn.item_id
+		JOIN (SELECT item_id, SUM(sold_low) + SUM(sold_high) AS sold FROM flows
+		      WHERE house_id = ?1 AND ts >= ?4 GROUP BY item_id) f ON f.item_id = sn.item_id
 		WHERE sn.realm_id = ?1 AND sn.ts = (SELECT MAX(ts) FROM snapshots WHERE realm_id = ?1)
 		  AND sn.cheap_qty > 0 AND i.name <> ''
 		  AND sn.median * (100 - ?2) / 100.0 > sn.cheap_avg
+		  AND f.sold / 2.0 * 24.0 / ?5 >= ?6 * sn.quantity
 		ORDER BY (sn.median * (100 - ?2) / 100.0 - sn.cheap_avg) * sn.cheap_qty DESC, sn.item_id
-		LIMIT ?3`, houseID, cutPercent, limit)
+		LIMIT ?3`, houseID, cutPercent, limit, since.Unix(), hours, candidateSellThrough)
 	if err != nil {
 		return nil, err
 	}

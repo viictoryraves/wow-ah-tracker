@@ -135,6 +135,7 @@ export function InvestmentPlanner({ realm, onOpenItem }: Props) {
               <thead>
                 <tr>
                   <th scope="col">{t('colItem')}</th>
+                  <th scope="col" className="num">{t('soldPerDay')}</th>
                   <th scope="col" className="num">{t('planColBuy')}</th>
                   <th scope="col" className="num">{t('planColSell')}</th>
                   <th scope="col" className="num">{t('planColUnits')}</th>
@@ -153,6 +154,7 @@ export function InvestmentPlanner({ realm, onOpenItem }: Props) {
                         <span className="name">{p.name}</span>
                       </button>
                     </td>
+                    <td className="num" title={t('demandHigh')}>{formatCount(Math.round(p.soldPerDay), lang)}</td>
                     <td className="num"><Money copper={p.buy} /></td>
                     <td className="num">
                       <Money copper={p.sell} />

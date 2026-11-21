@@ -169,7 +169,7 @@ Every item endpoint takes `realm` = a **market (house) id**. Without it, the fir
 |---|---|
 | `GET /api/realms` | rulesets with only their houses that have data: `[{id, name, houses:[{id, faction}]}]` |
 | `GET /api/items?q=&realm=&category=&sort=&dir=&lang=` | up to 20 items by name; with only `category`, up to 50 most listed; 400 if neither. `sort=price` orders by the lowest buyout, highest first; `sort=sold-low` / `sort=sold-high` by the units sold (`flows.sold_low` / `sold_high`) in the last 7 days; highest first unless `dir=asc` (`dir=desc` is the default, anything else a 400); ties by name; any other `sort` is a 400. By price, items on sale in the latest snapshot always come before ones last seen earlier, in either direction. Every item carries `soldLow`/`soldHigh`, the sums of `flows` over that window. `lang=es` returns the Spanish name (English where there is none) and a typed name matches either language; `lang` other than `en`/`es` is a 400 |
-| `GET /api/plan?realm=&budget=&lang=` | the investment plan for `budget` copper (1 to 2147483647, else 400): `{budget, spent, unspent, revenue, profit, returnPct, cutPercent, picks:[{id,name,icon,units,buy,sell,net,cost,profit,returnPct,riskPct,daysToSell}]}`; `picks` is `[]` when nothing qualifies |
+| `GET /api/plan?realm=&budget=&lang=` | the investment plan for `budget` copper (1 to 2147483647, else 400): `{budget, spent, unspent, revenue, profit, returnPct, cutPercent, picks:[{id,name,icon,units,buy,sell,net,cost,profit,returnPct,riskPct,daysToSell,soldPerDay}]}`; `picks` is `[]` when nothing qualifies |
 | `GET /api/categories?realm=&lang=` | categories sold in the market, by name: `[{id, name, soldLow, soldHigh}]`, the units sold in each over the last 7 days; `lang=es` names them in Spanish (one entry per category even while only some items have a Spanish name) |
 | `GET /api/items/{id}/history?realm=&days=` | snapshots (default 7 days, capped at retention) |
 | `GET /api/items/{id}/insights?realm=` | insights, advice and the 7-day demand reading; 404 without prices |
@@ -181,11 +181,16 @@ Lists are never `null` (empty array), unknown markets are 400, and errors are pl
 ### 5.5b `invest`: the investment plan (FR-9.*)
 
 `store.InvestmentCandidates` prefilters in SQL: named items in the market's latest snapshot with a cheap tier whose
-`cheap_avg` is below the median net of the cut, best `(median x (1-cut) - cheap_avg) x cheap_qty` first, 200 of them.
+`cheap_avg` is below the median net of the cut **and that sell briskly** (a join with the flows of the last 7 days:
+roughly `(sold_low + sold_high) / 2` a day at least 20% of the listed units; looser than the real test so it never
+drops an item the real test keeps), best `(median x (1-cut) - cheap_avg) x cheap_qty` first, 200 of them. Items with
+no measured sales are never candidates.
 `/api/plan` then reads each one's history (market value = median of the hourly medians, as in the insights), demand
 (`ComputeDemand`) and `Store.SalePrice` (units-weighted `sold_value_low / sold_low` over 7 days, flows without a
 value left out) and calls the pure `invest.Make(budget, cut, candidates)`:
 
+- **High demand only:** `/api/plan` sets `Candidate.HighDemand` from `ComputeDemand(...).Level == HighDemand` (the
+  item window's own test, 30% of the stock a day) and `Make` skips everything else.
 - **Sell price** = `min(SalePrice, MarketValue)`; **net** = `floor(sell x (1 - cut))`; **return** = `(net - buy) / buy`.
   Skipped: no tier, no sale price, fewer than `MinSoldUnits` (5) units seen leaving, fewer than `MinHistory` (6)
   snapshots, fewer than `MinObservedHours` (3) of sales, or a return under `MinReturnPct` (5%).

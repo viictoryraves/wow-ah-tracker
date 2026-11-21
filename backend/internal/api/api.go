@@ -392,6 +392,7 @@ type planPick struct {
 	ReturnPct  float64 `json:"returnPct"`  // Profit / Cost
 	RiskPct    float64 `json:"riskPct"`    // 0 to 100
 	DaysToSell float64 `json:"daysToSell"` // how long the market takes to absorb the units
+	SoldPerDay float64 `json:"soldPerDay"` // units the market takes a day (the cautious estimate)
 }
 
 type planResponse struct {
@@ -405,7 +406,8 @@ type planResponse struct {
 	Picks      []planPick `json:"picks"`
 }
 
-// plan serves /api/plan?realm=&budget=&lang=: what to buy with budget copper in this market, how many of each,
+// plan serves /api/plan?realm=&budget=&lang=: what to buy with budget copper in this market, among the items in
+// high demand (the same test as the demand level of the item window), how many of each,
 // what to expect from selling them after the auction house cut, and how risky each one is. An item only shows up
 // while it is on sale cheaply (its lowest tier costs less than its usual asking price after the cut), and it is
 // expected to sell at the price units really left the market at, never above the usual asking price: what
@@ -425,7 +427,7 @@ func (s *server) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cut, _ := s.rulesFor(realm)
-	found, err := s.st.InvestmentCandidates(realm, cut, lang, planCandidates)
+	found, err := s.st.InvestmentCandidates(realm, cut, lang, time.Now().Add(-demandDays*24*time.Hour), planCandidates)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -460,7 +462,7 @@ func (s *server) plan(w http.ResponseWriter, r *http.Request) {
 		byID[o.ItemID] = o
 		candidates = append(candidates, invest.Candidate{
 			ItemID: o.ItemID, TierUnits: o.TierUnits, TierPrice: o.TierPrice, MarketValue: in.MarketValue,
-			SalePrice: salePrice, SoldUnits: sold, Listed: o.Quantity,
+			SalePrice: salePrice, SoldUnits: sold, Listed: o.Quantity, HighDemand: d.Level == insights.HighDemand,
 			Medians: medians, SoldPerDayLow: d.PerDayLow, ObservedHours: d.ObservedHours,
 		})
 	}
@@ -473,7 +475,7 @@ func (s *server) plan(w http.ResponseWriter, r *http.Request) {
 		o := byID[p.ItemID]
 		out.Picks = append(out.Picks, planPick{
 			ID: p.ItemID, Name: o.Name, Icon: o.Icon, Units: p.Units, Buy: p.Buy, Sell: p.Sell, Net: p.Net,
-			Cost: p.Cost, Profit: p.Profit, ReturnPct: p.ReturnPct, RiskPct: p.RiskPct, DaysToSell: p.DaysToSell,
+			Cost: p.Cost, Profit: p.Profit, ReturnPct: p.ReturnPct, RiskPct: p.RiskPct, DaysToSell: p.DaysToSell, SoldPerDay: p.SoldPerDay,
 		})
 	}
 	writeJSON(w, out)

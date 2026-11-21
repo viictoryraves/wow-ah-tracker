@@ -743,11 +743,19 @@ func tier(item int, min, median int64, qty, tierQty int, tierAvg int64) poller.I
 func market(t *testing.T) *Store {
 	t.Helper()
 	s := newStore(t)
-	for id, name := range map[int]string{1: "Linen Cloth", 2: "Silk Cloth", 3: "Wool Cloth", 4: "Old Cloth"} {
+	for id, name := range map[int]string{1: "Linen Cloth", 2: "Silk Cloth", 3: "Wool Cloth", 4: "Old Cloth", 6: "Slow Cloth"} {
 		must(t, s.SaveItem(id, name, "https://icons/"+name+".jpg", 10))
 	}
 	must(t, s.SaveItemSpanish(1, "Paño de lino", "Objeto comerciable"))
+	// sales measured over 4 hourly flows: items 1, 2, 3 and 5 sell briskly, 6 barely
+	for h := 1; h <= 4; h++ {
+		must(t, s.SaveFlows(110, t0.Add(-time.Duration(h)*time.Hour), []poller.ItemFlow{
+			{ItemID: 1, SoldLow: 400, SoldHigh: 600}, {ItemID: 2, SoldLow: 10, SoldHigh: 14}, {ItemID: 3, SoldLow: 30, SoldHigh: 30},
+			{ItemID: 5, SoldLow: 10, SoldHigh: 10}, {ItemID: 6, SoldLow: 1, SoldHigh: 1},
+		}))
+	}
 	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{
+		tier(6, 100, 300, 5000, 400, 105), // a deep, cheap flip, but it sells 24 a day out of 5000 listed
 		tier(1, 100, 300, 5000, 400, 105), // net of 5% at 300 is 285: +180 per unit on 400 units
 		tier(2, 1000, 1500, 90, 3, 1010),  // net 1425: +415 per unit on 3 units
 		tier(3, 500, 510, 100, 20, 505),   // net 484 is below what it costs: no flip
@@ -759,7 +767,7 @@ func market(t *testing.T) *Store {
 
 func TestInvestmentCandidatesAreTheCheapOnesWorthALookAfterTheCut(t *testing.T) {
 	s := market(t)
-	got, err := s.InvestmentCandidates(110, 5, "", 10)
+	got, err := s.InvestmentCandidates(110, 5, "", t0.Add(-24*time.Hour), 10)
 	must(t, err)
 	var ids []int
 	for _, c := range got {
@@ -778,28 +786,29 @@ func TestInvestmentCandidatesAreTheCheapOnesWorthALookAfterTheCut(t *testing.T) 
 func TestTheCutDecidesWhichItemsAreCandidates(t *testing.T) {
 	s := market(t)
 	// item 2: net at 1500 is 1275 under a 15% cut, still above 1010; item 1: 255 above 105. Item 3 never.
-	got, _ := s.InvestmentCandidates(110, 15, "", 10)
+	got, _ := s.InvestmentCandidates(110, 15, "", t0.Add(-24*time.Hour), 10)
 	if len(got) != 2 {
 		t.Fatalf("got %d candidates at 15%%, want 2", len(got))
 	}
 	s2 := newStore(t)
 	must(t, s2.SaveItem(1, "Thing", "", 0))
-	must(t, s2.SaveSnapshot(110, t0, []poller.ItemStats{tier(1, 1000, 1100, 10, 10, 1000)})) // 1045 net at 5%: above 1000; 935 at 15%: below
-	if got, _ := s2.InvestmentCandidates(110, 5, "", 10); len(got) != 1 {
+	must(t, s2.SaveFlows(110, t0.Add(-time.Hour), []poller.ItemFlow{{ItemID: 1, SoldLow: 20, SoldHigh: 20}})) // sells well
+	must(t, s2.SaveSnapshot(110, t0, []poller.ItemStats{tier(1, 1000, 1100, 10, 10, 1000)}))                  // 1045 net at 5%: above 1000; 935 at 15%: below
+	if got, _ := s2.InvestmentCandidates(110, 5, "", t0.Add(-24*time.Hour), 10); len(got) != 1 {
 		t.Errorf("at 5%% got %d, want 1", len(got))
 	}
-	if got, _ := s2.InvestmentCandidates(110, 15, "", 10); len(got) != 0 {
+	if got, _ := s2.InvestmentCandidates(110, 15, "", t0.Add(-24*time.Hour), 10); len(got) != 0 {
 		t.Errorf("at 15%% got %d, want 0", len(got))
 	}
 }
 
 func TestInvestmentCandidatesComeInSpanishAndAreLimited(t *testing.T) {
 	s := market(t)
-	es, _ := s.InvestmentCandidates(110, 5, "es", 10)
+	es, _ := s.InvestmentCandidates(110, 5, "es", t0.Add(-24*time.Hour), 10)
 	if len(es) != 2 || es[0].Name != "Paño de lino" || es[1].Name != "Silk Cloth" {
 		t.Errorf("names = %+v, want Spanish where known and English otherwise", es)
 	}
-	if one, _ := s.InvestmentCandidates(110, 5, "", 1); len(one) != 1 || one[0].ItemID != 1 {
+	if one, _ := s.InvestmentCandidates(110, 5, "", t0.Add(-24*time.Hour), 1); len(one) != 1 || one[0].ItemID != 1 {
 		t.Errorf("with a limit of 1 got %+v, want the best", one)
 	}
 }
@@ -808,11 +817,11 @@ func TestOnlyWhatIsOnSaleNowIsACandidate(t *testing.T) {
 	s := market(t)
 	// the next snapshot no longer lists item 2
 	must(t, s.SaveSnapshot(110, t0.Add(time.Hour), []poller.ItemStats{tier(1, 100, 300, 5000, 400, 105)}))
-	got, _ := s.InvestmentCandidates(110, 5, "", 10)
+	got, _ := s.InvestmentCandidates(110, 5, "", t0.Add(-24*time.Hour), 10)
 	if len(got) != 1 || got[0].ItemID != 1 {
 		t.Fatalf("got %+v, want only item 1: item 2 is not for sale any more", got)
 	}
-	if other, _ := s.InvestmentCandidates(113, 5, "", 10); len(other) != 0 {
+	if other, _ := s.InvestmentCandidates(113, 5, "", t0.Add(-24*time.Hour), 10); len(other) != 0 {
 		t.Errorf("another house has %d candidates, want none", len(other))
 	}
 }
@@ -850,5 +859,33 @@ func TestFlowsStoredBeforeTheirValueWasKnownAreLeftOutOfTheSalePrice(t *testing.
 	price, units, _ := s.SalePrice(110, 7, t0.Add(-time.Hour))
 	if price != 100 || units != 10 {
 		t.Errorf("price %d over %d units, want 100 over 10: the 50 old units have no value and must not drag it to zero", price, units)
+	}
+}
+
+func TestOnlyItemsThatSellWellAreCandidates(t *testing.T) {
+	s := market(t)
+	got, _ := s.InvestmentCandidates(110, 5, "", t0.Add(-24*time.Hour), 10)
+	for _, c := range got {
+		if c.ItemID == 6 {
+			t.Errorf("item 6 sells 24 a day out of 5000 listed: not a candidate, however cheap")
+		}
+	}
+	// without any measured sales nothing qualifies: there is no evidence that anything sells
+	empty := newStore(t)
+	must(t, empty.SaveItem(1, "Thing", "", 0))
+	must(t, empty.SaveSnapshot(110, t0, []poller.ItemStats{tier(1, 100, 300, 500, 100, 105)}))
+	if got, _ := empty.InvestmentCandidates(110, 5, "", t0.Add(-24*time.Hour), 10); len(got) != 0 {
+		t.Errorf("got %+v without any measured sales, want none", got)
+	}
+}
+
+func TestBrightSalesFromBeforeTheWindowDoNotCount(t *testing.T) {
+	s := newStore(t)
+	must(t, s.SaveItem(1, "Thing", "", 0))
+	must(t, s.SaveFlows(110, t0.Add(-100*time.Hour), []poller.ItemFlow{{ItemID: 1, SoldLow: 900, SoldHigh: 900}}))
+	must(t, s.SaveFlows(110, t0.Add(-time.Hour), []poller.ItemFlow{{ItemID: 1, SoldLow: 1, SoldHigh: 1}}))
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{tier(1, 100, 300, 500, 100, 105)}))
+	if got, _ := s.InvestmentCandidates(110, 5, "", t0.Add(-24*time.Hour), 10); len(got) != 0 {
+		t.Errorf("got %+v: only 1 unit sold in the window out of 500", got)
 	}
 }

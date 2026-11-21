@@ -751,17 +751,18 @@ type planBody struct {
 	ReturnPct  float64 `json:"returnPct"`
 	CutPercent float64 `json:"cutPercent"`
 	Picks      []struct {
-		ID        int     `json:"id"`
-		Name      string  `json:"name"`
-		Icon      string  `json:"icon"`
-		Units     int     `json:"units"`
-		Buy       int64   `json:"buy"`
-		Sell      int64   `json:"sell"`
-		Net       int64   `json:"net"`
-		Cost      int64   `json:"cost"`
-		Profit    int64   `json:"profit"`
-		ReturnPct float64 `json:"returnPct"`
-		RiskPct   float64 `json:"riskPct"`
+		ID         int     `json:"id"`
+		Name       string  `json:"name"`
+		Icon       string  `json:"icon"`
+		Units      int     `json:"units"`
+		Buy        int64   `json:"buy"`
+		Sell       int64   `json:"sell"`
+		Net        int64   `json:"net"`
+		Cost       int64   `json:"cost"`
+		Profit     int64   `json:"profit"`
+		ReturnPct  float64 `json:"returnPct"`
+		RiskPct    float64 `json:"riskPct"`
+		SoldPerDay float64 `json:"soldPerDay"`
 	} `json:"picks"`
 }
 
@@ -874,5 +875,48 @@ func TestThePlanNeedsToHaveSeenUnitsLeaveTheMarket(t *testing.T) {
 	json.Unmarshal(get(t, h, "/api/plan?realm=110&budget=10000000").Body.Bytes(), &got)
 	if len(got.Picks) != 0 {
 		t.Errorf("picks = %+v, want none without a known sale price", got.Picks)
+	}
+}
+
+// stockOf is flipMarket with item 7 listing the given number of units: the same sales then make it sell a
+// bigger or smaller share of its stock a day.
+func stockOf(t *testing.T, listed int) http.Handler {
+	t.Helper()
+	h, st := setup(t)
+	st.SaveItem(7, "Linen Cloth", "", 13)
+	now := time.Now().Truncate(time.Second)
+	for i := 11; i >= 0; i-- {
+		ts := now.Add(-time.Duration(i) * time.Hour)
+		save(t, st, 110, ts, poller.ItemStats{ItemID: 7, Min: 1000, Median: 3000, Avg: 3000, Quantity: listed, CheapQty: 100, CheapAvg: 1010})
+		st.SaveFlows(110, ts, []poller.ItemFlow{{ItemID: 7, SoldLow: 5, SoldHigh: 8, Sales: 3, SoldValueLow: 5 * 3000}})
+	}
+	return h
+}
+
+func TestThePlanOnlyBuysItemsInHighDemand(t *testing.T) {
+	// about 170 units a day (the middle of the estimates) out of the stock listed
+	for _, c := range []struct {
+		listed int
+		want   int
+		why    string
+	}{
+		{150, 1, "113% of the stock a day: high demand"},
+		{500, 1, "34% a day: still high demand"},
+		{650, 0, "26% a day: medium demand, so no (it passes the rough shortlist but not the real test)"},
+		{3000, 0, "6% a day: low demand"},
+	} {
+		var got planBody
+		json.Unmarshal(get(t, stockOf(t, c.listed), "/api/plan?realm=110&budget=10000000").Body.Bytes(), &got)
+		if len(got.Picks) != c.want {
+			t.Errorf("%d listed: %d picks, want %d (%s)", c.listed, len(got.Picks), c.want, c.why)
+		}
+	}
+}
+
+func TestAPickSaysHowManyUnitsSellADay(t *testing.T) {
+	var got planBody
+	json.Unmarshal(get(t, stockOf(t, 150), "/api/plan?realm=110&budget=10000000").Body.Bytes(), &got)
+	if len(got.Picks) != 1 || got.Picks[0].SoldPerDay < 100 || got.Picks[0].SoldPerDay > 160 {
+		t.Errorf("picks = %+v, want about 131 units a day (the cautious estimate)", got.Picks)
 	}
 }

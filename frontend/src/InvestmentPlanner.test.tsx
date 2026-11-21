@@ -6,7 +6,7 @@ import type { Lang } from './i18n'
 
 const pick = (over: Record<string, unknown> = {}) => ({
   id: 7, name: 'Linen Cloth', icon: 'https://icons/linen.jpg', units: 100, buy: 1010, sell: 3000, net: 2850,
-  cost: 101000, profit: 184000, returnPct: 182.2, riskPct: 9.4, daysToSell: 0.8, ...over,
+  cost: 101000, profit: 184000, returnPct: 182.2, riskPct: 9.4, daysToSell: 0.8, soldPerDay: 131.2, ...over,
 })
 const plan = (over: Record<string, unknown> = {}) => ({
   budget: 5_000_000, spent: 101000, unspent: 4_899_000, revenue: 285000, profit: 184000, returnPct: 182.2, cutPercent: 5,
@@ -44,6 +44,26 @@ describe('InvestmentPlanner', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 
+  it('says it only looks at items in high demand, and shows how many of each the market takes a day', async () => {
+    mockPlan(plan())
+    const { user } = renderPlanner()
+    expect(screen.getByText(/items in high demand/i)).toBeInTheDocument()
+    await user.type(budgetBox(), '500')
+    await go(user)
+    const cell = (await screen.findByRole('button', { name: /linen cloth/i })).closest('tr')!.querySelectorAll('td')[1]
+    expect(cell).toHaveAttribute('title', 'High demand')
+  })
+
+  it('says it in Spanish too', async () => {
+    mockPlan(plan())
+    const { user } = renderPlanner({ lang: 'es' })
+    expect(screen.getByText(/objetos de alta demanda/i)).toBeInTheDocument()
+    await user.type(budgetBox(), '500')
+    await go(user)
+    const cell = (await screen.findByRole('button', { name: /linen cloth/i })).closest('tr')!.querySelectorAll('td')[1]
+    expect(cell).toHaveAttribute('title', 'Demanda alta')
+  })
+
   it('sends the gold as copper for the market and shows what to buy, sell and earn', async () => {
     const fetchMock = mockPlan(plan())
     const { user } = renderPlanner()
@@ -53,18 +73,19 @@ describe('InvestmentPlanner', () => {
 
     const table = await screen.findByRole('table')
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
-      'Item', 'Buy at', 'Sell at', 'Units', 'Cost', 'Profit', 'Return', 'Risk',
+      'Item', 'Sold per day', 'Buy at', 'Sell at', 'Units', 'Cost', 'Profit', 'Return', 'Risk',
     ])
     const row = within(table).getByRole('button', { name: /linen cloth/i }).closest('tr')!
     const cells = within(row).getAllByRole('cell')
-    expect(cells[1]).toHaveTextContent('10s 10c') // buy at 1010
-    expect(cells[2]).toHaveTextContent('30s') // sell at 3000
-    expect(cells[2]).toHaveTextContent('28s 50c') // and what is left of it after the cut
-    expect(cells[3]).toHaveTextContent('100')
-    expect(cells[4]).toHaveTextContent('10g 10s') // cost 101000
-    expect(cells[5]).toHaveTextContent('18g 40s') // profit 184000
-    expect(cells[6]).toHaveTextContent('182%')
-    expect(cells[7]).toHaveTextContent('9%')
+    expect(cells[1]).toHaveTextContent('131') // what the market takes a day
+    expect(cells[2]).toHaveTextContent('10s 10c') // buy at 1010
+    expect(cells[3]).toHaveTextContent('30s') // sell at 3000
+    expect(cells[3]).toHaveTextContent('28s 50c') // and what is left of it after the cut
+    expect(cells[4]).toHaveTextContent('100')
+    expect(cells[5]).toHaveTextContent('10g 10s') // cost 101000
+    expect(cells[6]).toHaveTextContent('18g 40s') // profit 184000
+    expect(cells[7]).toHaveTextContent('182%')
+    expect(cells[8]).toHaveTextContent('9%')
   })
 
   it('sums it up: what is spent, what it earns after the cut, the return, and what is left over', async () => {
@@ -121,6 +142,7 @@ describe('InvestmentPlanner', () => {
     await go(user)
     expect(await screen.findByText(/nothing is worth buying/i)).toBeInTheDocument()
     expect(screen.getByText(/hours of price history/i)).toBeInTheDocument()
+    expect(screen.getByText(/only looks at items in high demand/i)).toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 
@@ -152,7 +174,7 @@ describe('InvestmentPlanner', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/plan?realm=110&budget=5000000&lang=es'))
     const table = await screen.findByRole('table')
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
-      'Objeto', 'Comprar a', 'Vender a', 'Unidades', 'Coste', 'Beneficio', 'Rentabilidad', 'Riesgo',
+      'Objeto', 'Vendidas al día', 'Comprar a', 'Vender a', 'Unidades', 'Coste', 'Beneficio', 'Rentabilidad', 'Riesgo',
     ])
     const summary = screen.getByRole('status')
     expect(summary).toHaveTextContent(/gastas 10o 10p de 500o/i)

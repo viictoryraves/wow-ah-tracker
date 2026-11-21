@@ -53,6 +53,9 @@ type Candidate struct {
 	// SoldPerDayLow is the cautious estimate of units sold per day, and ObservedHours how long it was measured.
 	SoldPerDayLow float64
 	ObservedHours float64
+	// HighDemand says the item sells fast for its stock (the same test as the demand level in the item window:
+	// at least 30% of the stock a day). Only such items are planned: a cheap item nobody buys is not a flip.
+	HighDemand bool
 }
 
 // Pick is one item of the plan. Prices are copper per unit.
@@ -68,6 +71,7 @@ type Pick struct {
 	ReturnPct  float64 // Profit / Cost
 	RiskPct    float64 // 0 to 100
 	DaysToSell float64 // how long the market takes to absorb Units
+	SoldPerDay float64 // units the market takes a day (the cautious estimate)
 }
 
 // Plan is the shopping list and its totals.
@@ -80,7 +84,7 @@ type Plan struct {
 	Picks     []Pick
 }
 
-// Make picks up to MaxPicks items for the budget (in copper). cutPercent is the auction house cut taken from
+// Make picks up to MaxPicks items in high demand for the budget (in copper). cutPercent is the auction house cut taken from
 // every sale. Each item is bought from its cheap tier and sold at the price units really left the market at
 // (capped by its usual asking price). The best items by return adjusted for risk come first, each limited by
 // what its cheap tier holds, what the market sells in SellDays (once the stock ahead of a new listing has
@@ -102,7 +106,7 @@ func Make(budget int64, cutPercent float64, candidates []Candidate) Plan {
 	}
 	var ranked []scored
 	for _, c := range candidates {
-		if c.TierUnits <= 0 || c.TierPrice <= 0 || c.MarketValue <= 0 || c.SalePrice <= 0 || c.SoldPerDayLow <= 0 ||
+		if !c.HighDemand || c.TierUnits <= 0 || c.TierPrice <= 0 || c.MarketValue <= 0 || c.SalePrice <= 0 || c.SoldPerDayLow <= 0 ||
 			c.SoldUnits < MinSoldUnits || len(c.Medians) < MinHistory || c.ObservedHours < MinObservedHours {
 			continue
 		}
@@ -167,7 +171,7 @@ func Make(budget int64, cutPercent float64, candidates []Candidate) Plan {
 		timeRisk := math.Min(1, days/RiskDays)
 		p := Pick{
 			ItemID: r.c.ItemID, Units: int(units), Buy: buy, Sell: r.sell, Net: r.net,
-			Cost: units * buy, Revenue: units * r.net, DaysToSell: days,
+			Cost: units * buy, Revenue: units * r.net, DaysToSell: days, SoldPerDay: r.c.SoldPerDayLow,
 			RiskPct: 100 * (1 - (1-r.risk)*(1-timeRisk)),
 		}
 		p.Profit = p.Revenue - p.Cost

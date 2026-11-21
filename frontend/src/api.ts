@@ -149,6 +149,7 @@ export interface PlanPick {
   returnPct: number
   riskPct: number // 0 to 100
   daysToSell: number
+  soldPerDay: number // units the market takes a day (the cautious estimate)
 }
 
 export interface Plan {

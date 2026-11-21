@@ -117,7 +117,7 @@ const en = {
   // investment planner
   planTitle: 'Investment planner',
   planIntro:
-    'Enter the gold you want to invest and see the ten best items to buy and sell again, after the auction house cut.',
+    'Enter the gold you want to invest and see the ten best items in high demand to buy and sell again, after the auction house cut.',
   planBudget: 'Gold to invest',
   planBudgetPlaceholder: 'e.g. 500',
   planGo: 'Find the best buys',
@@ -125,7 +125,7 @@ const en = {
   planLoading: 'Looking for the best buys…',
   planNone: 'Nothing is worth buying with this budget right now.',
   planNoneWhy:
-    'The planner needs several hours of price history and measured sales, so try again later or with another budget.',
+    'The planner only looks at items in high demand and needs several hours of price history and measured sales, so try again later or with another budget.',
   planColBuy: 'Buy at',
   planColSell: 'Sell at',
   planColUnits: 'Units',
@@ -268,7 +268,7 @@ const es: Record<Key, string> = {
     'Basado en {count}. Estadísticas a partir de precios pasados, no asesoramiento financiero. Los márgenes anteriores no incluyen los depósitos.',
   planTitle: 'Planificador de inversión',
   planIntro:
-    'Indica el oro que quieres invertir y mira los diez mejores objetos para comprar y volver a vender, descontada la comisión de la casa de subastas.',
+    'Indica el oro que quieres invertir y mira los diez mejores objetos de alta demanda para comprar y volver a vender, descontada la comisión de la casa de subastas.',
   planBudget: 'Oro a invertir',
   planBudgetPlaceholder: 'p. ej., 500',
   planGo: 'Buscar las mejores compras',
@@ -276,7 +276,7 @@ const es: Record<Key, string> = {
   planLoading: 'Buscando las mejores compras…',
   planNone: 'Ahora mismo no merece la pena comprar nada con este presupuesto.',
   planNoneWhy:
-    'El planificador necesita varias horas de historial de precios y ventas medidas, así que vuelve a intentarlo más tarde o con otro presupuesto.',
+    'El planificador solo mira objetos de alta demanda y necesita varias horas de historial de precios y ventas medidas, así que vuelve a intentarlo más tarde o con otro presupuesto.',
   planColBuy: 'Comprar a',
   planColSell: 'Vender a',
   planColUnits: 'Unidades',
