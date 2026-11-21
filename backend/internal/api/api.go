@@ -116,7 +116,7 @@ const (
 	browseLimit = 50
 )
 
-// searchItems serves /api/items?q=&realm=&category=. It needs a query, a category, or both:
+// searchItems serves /api/items?q=&realm=&category=&sort=. It needs a query, a category, or both:
 // a category alone browses what is on sale in that category.
 func (s *server) searchItems(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -137,11 +137,21 @@ func (s *server) searchItems(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sort := r.URL.Query().Get("sort")
+	switch sort {
+	case "", store.SortPrice, store.SortSoldLow, store.SortSoldHigh:
+	default:
+		http.Error(w, "invalid sort", http.StatusBadRequest)
+		return
+	}
 	limit := searchLimit
 	if q == "" {
 		limit = browseLimit
 	}
-	items, err := s.st.SearchItems(realm, store.ItemQuery{Query: q, Class: class, Limit: limit})
+	items, err := s.st.SearchItems(realm, store.ItemQuery{
+		Query: q, Class: class, Limit: limit, Sort: sort,
+		Since: time.Now().Add(-demandDays * 24 * time.Hour),
+	})
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -180,7 +190,7 @@ func (s *server) listCategories(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cats, err := s.st.Categories(realm)
+	cats, err := s.st.Categories(realm, time.Now().Add(-demandDays*24*time.Hour))
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

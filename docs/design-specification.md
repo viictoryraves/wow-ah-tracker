@@ -152,8 +152,8 @@ Every item endpoint takes `realm` = a **market (house) id**. Without it, the fir
 | Endpoint | Returns |
 |---|---|
 | `GET /api/realms` | rulesets with only their houses that have data: `[{id, name, houses:[{id, faction}]}]` |
-| `GET /api/items?q=&realm=&category=` | up to 20 items by name; with only `category`, up to 50 most listed; 400 if neither |
-| `GET /api/categories?realm=` | categories sold in the market: `[{id, name}]` |
+| `GET /api/items?q=&realm=&category=&sort=` | up to 20 items by name; with only `category`, up to 50 most listed; 400 if neither. `sort=price` orders by the lowest buyout, highest first; `sort=sold-low` / `sort=sold-high` by the units sold (`flows.sold_low` / `sold_high`) in the last 7 days, highest first; ties by name; any other value is a 400. Every item carries `soldLow`/`soldHigh`, the sums of `flows` over that window |
+| `GET /api/categories?realm=` | categories sold in the market, by name: `[{id, name, soldLow, soldHigh}]`, the units sold in each over the last 7 days |
 | `GET /api/items/{id}/history?realm=&days=` | snapshots (default 7 days, capped at retention) |
 | `GET /api/items/{id}/insights?realm=` | insights, advice and the 7-day demand reading; 404 without prices |
 | `GET /api/items/{id}/flow?realm=&days=` | the stored sales-volume rows |

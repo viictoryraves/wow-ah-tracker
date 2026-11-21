@@ -535,7 +535,7 @@ func TestFillItemNamesKeepsTheCategory(t *testing.T) {
 	if err := ing.FillItemNames(ctx, 10); err != nil {
 		t.Fatal(err)
 	}
-	cats, err := st.Categories(110)
+	cats, err := st.Categories(110, time.Time{})
 	if err != nil || len(cats) != 2 || cats[0].Name != "Armor" || cats[1].Name != "Trade Goods" {
 		t.Fatalf("categories = %+v err = %v, want Armor and Trade Goods", cats, err)
 	}

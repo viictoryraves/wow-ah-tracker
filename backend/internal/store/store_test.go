@@ -383,7 +383,7 @@ func TestCategoriesListWhatTheMarketHasSortedByName(t *testing.T) {
 	must(t, s.SaveItemClass(13, 15, "Miscellaneous"))
 	must(t, s.SaveSnapshot(113, t0, []poller.ItemStats{stat(13, 1, 1, 1, 1)})) // another house
 
-	cats, err := s.Categories(110)
+	cats, err := s.Categories(110, time.Time{})
 	must(t, err)
 	var got []string
 	for _, c := range cats {
@@ -479,5 +479,81 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestResultsCanBeSortedByPriceHighestFirst(t *testing.T) {
+	s := categorised(t)
+	res, err := s.SearchItems(110, ItemQuery{Query: "linen", Sort: SortPrice, Limit: 10})
+	must(t, err)
+	if got := names(res); len(got) != 3 || got[0] != "Linen Vest" || got[1] != "Linen Cloth" || got[2] != "Linen Bandage" {
+		t.Fatalf("got %v, want the dearest first", got)
+	}
+}
+
+func TestResultsCanBeSortedByTheLowOrTheHighCountOfUnitsSold(t *testing.T) {
+	s := categorised(t)
+	// the cloth sold 10 to 12 units, the bandage 1 to 40; the vest only has an old flow
+	must(t, s.SaveFlows(110, t0, []poller.ItemFlow{{ItemID: 7, SoldLow: 10, SoldHigh: 12}, {ItemID: 9, SoldLow: 1, SoldHigh: 40}}))
+	must(t, s.SaveFlows(110, t0.Add(-72*time.Hour), []poller.ItemFlow{{ItemID: 8, SoldLow: 99, SoldHigh: 99}}))
+	since := t0.Add(-24 * time.Hour)
+
+	byHigh, err := s.SearchItems(110, ItemQuery{Query: "linen", Sort: SortSoldHigh, Since: since, Limit: 10})
+	must(t, err)
+	if got := names(byHigh); len(got) != 3 || got[0] != "Linen Bandage" || got[1] != "Linen Cloth" || got[2] != "Linen Vest" {
+		t.Fatalf("by high: got %v, want the most units that left first, ignoring flows before Since", got)
+	}
+	byLow, err := s.SearchItems(110, ItemQuery{Query: "linen", Sort: SortSoldLow, Since: since, Limit: 10})
+	must(t, err)
+	if got := names(byLow); len(got) != 3 || got[0] != "Linen Cloth" || got[1] != "Linen Bandage" || got[2] != "Linen Vest" {
+		t.Fatalf("by low: got %v, want the most units surely sold first", got)
+	}
+}
+
+func TestSortingKeepsTheLimitOnTheBestItems(t *testing.T) {
+	s := categorised(t)
+	res, err := s.SearchItems(110, ItemQuery{Query: "linen", Sort: SortPrice, Limit: 1})
+	must(t, err)
+	if got := names(res); len(got) != 1 || got[0] != "Linen Vest" {
+		t.Fatalf("got %v, want the single dearest item, not the first by name", got)
+	}
+}
+
+func TestResultsCarryTheUnitsSoldSince(t *testing.T) {
+	s := categorised(t)
+	must(t, s.SaveFlows(110, t0, []poller.ItemFlow{{ItemID: 7, SoldLow: 3, SoldHigh: 5}}))
+	must(t, s.SaveFlows(110, t0.Add(-time.Hour), []poller.ItemFlow{{ItemID: 7, SoldLow: 1, SoldHigh: 2}}))
+	must(t, s.SaveFlows(110, t0.Add(-72*time.Hour), []poller.ItemFlow{{ItemID: 7, SoldLow: 9, SoldHigh: 9}})) // too old
+	res, err := s.SearchItems(110, ItemQuery{Query: "cloth", Since: t0.Add(-24 * time.Hour), Limit: 10})
+	must(t, err)
+	if len(res) != 1 || res[0].SoldLow != 4 || res[0].SoldHigh != 7 {
+		t.Fatalf("got %+v, want 4 to 7 units sold", res)
+	}
+	vest, _ := s.SearchItems(110, ItemQuery{Query: "vest", Since: t0.Add(-24 * time.Hour), Limit: 10})
+	if len(vest) != 1 || vest[0].SoldLow != 0 || vest[0].SoldHigh != 0 {
+		t.Errorf("vest = %+v, want nothing sold", vest)
+	}
+}
+
+func TestCategoriesCarryTheUnitsSoldInThemSince(t *testing.T) {
+	s := categorised(t)
+	must(t, s.SaveItem(10, "Silk Cloth", "", 80))
+	must(t, s.SaveItemClass(10, 7, "Trade Goods"))
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{stat(10, 150, 160, 160, 800)}))
+	must(t, s.SaveFlows(110, t0, []poller.ItemFlow{
+		{ItemID: 7, SoldLow: 3, SoldHigh: 5}, {ItemID: 10, SoldLow: 1, SoldHigh: 2}, {ItemID: 8, SoldLow: 0, SoldHigh: 1},
+	}))
+	must(t, s.SaveFlows(113, t0, []poller.ItemFlow{{ItemID: 7, SoldLow: 50, SoldHigh: 50}})) // another house
+	cats, err := s.Categories(110, t0.Add(-24*time.Hour))
+	must(t, err)
+	got := map[string][2]int{}
+	for _, c := range cats {
+		got[c.Name] = [2]int{c.SoldLow, c.SoldHigh}
+	}
+	want := map[string][2]int{"Trade Goods": {4, 7}, "Armor": {0, 1}, "Consumable": {0, 0}}
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("%s sold = %v, want %v (all: %v)", name, got[name], w, got)
+		}
 	}
 }

@@ -333,6 +333,9 @@ type ItemSummary struct {
 	Min      int64  `json:"min"`
 	Median   int64  `json:"median"`
 	Quantity int    `json:"quantity"`
+	// Units sold or cancelled (low) and every unit that left (high) since ItemQuery.Since.
+	SoldLow  int `json:"soldLow"`
+	SoldHigh int `json:"soldHigh"`
 }
 
 // SaveItemClass records an item's category; classID -1 means the item has none.
@@ -348,7 +351,16 @@ type ItemQuery struct {
 	Query string
 	Class *int
 	Limit int
+	Sort  string    // "" for the default order, or SortPrice / SortSoldLow / SortSoldHigh (highest first)
+	Since time.Time // the sold sorts count the units sold since then
 }
+
+// Orders a search can be sorted by, always the highest first.
+const (
+	SortPrice    = "price"     // the lowest buyout now
+	SortSoldLow  = "sold-low"  // units sold or cancelled recently that cannot have expired
+	SortSoldHigh = "sold-high" // every unit that left recently
+)
 
 // SearchItems lists items that have prices in a market, each with its latest price.
 func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
@@ -362,8 +374,20 @@ func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
 	if q.Query == "" {
 		browsing, order = 1, "sn.quantity DESC, i.name"
 	}
+	switch q.Sort {
+	case SortPrice:
+		order = "sn.min DESC, i.name"
+	case SortSoldLow:
+		order = "sold_low DESC, i.name"
+	case SortSoldHigh:
+		order = "sold_high DESC, i.name"
+	}
 	rows, err := s.db.Query(`
-		SELECT i.id, i.name, COALESCE(i.icon, ''), sn.min, sn.median, sn.quantity
+		SELECT i.id, i.name, COALESCE(i.icon, ''), sn.min, sn.median, sn.quantity,
+		       (SELECT COALESCE(SUM(f.sold_low), 0) FROM flows f
+		         WHERE f.house_id = ?1 AND f.item_id = i.id AND f.ts >= ?7) AS sold_low,
+		       (SELECT COALESCE(SUM(f.sold_high), 0) FROM flows f
+		         WHERE f.house_id = ?1 AND f.item_id = i.id AND f.ts >= ?7) AS sold_high
 		FROM items i
 		JOIN snapshots sn ON sn.item_id = i.id AND sn.realm_id = ?1
 		WHERE i.name LIKE '%' || ?2 || '%'
@@ -371,7 +395,7 @@ func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
 		  AND sn.ts = CASE WHEN ?6 = 1
 		        THEN (SELECT MAX(ts) FROM snapshots WHERE realm_id = ?1)
 		        ELSE (SELECT MAX(ts) FROM snapshots WHERE realm_id = ?1 AND item_id = i.id) END
-		ORDER BY `+order+` LIMIT ?3`, realmID, q.Query, q.Limit, anyClass, class, browsing)
+		ORDER BY `+order+` LIMIT ?3`, realmID, q.Query, q.Limit, anyClass, class, browsing, q.Since.Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +403,7 @@ func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
 	var out []ItemSummary
 	for rows.Next() {
 		var it ItemSummary
-		if err := rows.Scan(&it.ID, &it.Name, &it.Icon, &it.Min, &it.Median, &it.Quantity); err != nil {
+		if err := rows.Scan(&it.ID, &it.Name, &it.Icon, &it.Min, &it.Median, &it.Quantity, &it.SoldLow, &it.SoldHigh); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -391,16 +415,22 @@ func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
 type Category struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
+	// Units sold or cancelled (low) and every unit that left (high) in the category since the given time.
+	SoldLow  int `json:"soldLow"`
+	SoldHigh int `json:"soldHigh"`
 }
 
-// Categories lists the categories of the items that have prices in a market, by name.
-// Items whose category is not known yet are left out.
-func (s *Store) Categories(realmID int) ([]Category, error) {
+// Categories lists the categories of the items that have prices in a market, by name, with the
+// units sold in each since the given time. Items whose category is not known yet are left out.
+func (s *Store) Categories(realmID int, since time.Time) ([]Category, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT i.class_id, i.class_name
-		FROM items i JOIN snapshots sn ON sn.item_id = i.id AND sn.realm_id = ?
+		SELECT i.class_id, i.class_name, COALESCE(SUM(f.sold_low), 0), COALESCE(SUM(f.sold_high), 0)
+		FROM items i
+		LEFT JOIN flows f ON f.item_id = i.id AND f.house_id = ?1 AND f.ts >= ?2
 		WHERE i.class_id >= 0 AND i.class_name <> ''
-		ORDER BY i.class_name`, realmID)
+		  AND EXISTS (SELECT 1 FROM snapshots sn WHERE sn.item_id = i.id AND sn.realm_id = ?1)
+		GROUP BY i.class_id, i.class_name
+		ORDER BY i.class_name`, realmID, since.Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +438,7 @@ func (s *Store) Categories(realmID int) ([]Category, error) {
 	var out []Category
 	for rows.Next() {
 		var c Category
-		if err := rows.Scan(&c.ID, &c.Name); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.SoldLow, &c.SoldHigh); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

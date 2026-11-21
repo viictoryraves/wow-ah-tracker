@@ -590,3 +590,52 @@ func TestStatusValidatesTheMarket(t *testing.T) {
 		t.Errorf("code = %d, want 400", rec.Code)
 	}
 }
+
+func TestItemsCanBeSortedByPriceAndByUnitsSoldLowOrHigh(t *testing.T) {
+	h, st := categorisedMarket(t)
+	st.SaveFlows(110, time.Now(), []poller.ItemFlow{{ItemID: 7, SoldLow: 30, SoldHigh: 50}, {ItemID: 9, SoldLow: 5, SoldHigh: 90}})
+	order := func(sort string) string {
+		var got []store.ItemSummary
+		rec := get(t, h, "/api/items?realm=110&category=7&sort="+sort)
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil || len(got) != 2 {
+			t.Fatalf("sort=%s: code %d body %s", sort, rec.Code, rec.Body)
+		}
+		return got[0].Name
+	}
+	if first := order("price"); first != "Silk Cloth" {
+		t.Errorf("by price first = %s, want Silk Cloth (150 > 28)", first)
+	}
+	if first := order("sold-low"); first != "Linen Cloth" {
+		t.Errorf("by sold-low first = %s, want Linen Cloth (30 > 5)", first)
+	}
+	if first := order("sold-high"); first != "Silk Cloth" {
+		t.Errorf("by sold-high first = %s, want Silk Cloth (90 > 50)", first)
+	}
+}
+
+func TestAnUnknownSortIsRejected(t *testing.T) {
+	h, _ := categorisedMarket(t)
+	for _, sort := range []string{"luck", "demand"} {
+		if rec := get(t, h, "/api/items?realm=110&category=7&sort="+sort); rec.Code != http.StatusBadRequest {
+			t.Errorf("sort=%s: code = %d, want 400", sort, rec.Code)
+		}
+	}
+}
+
+func TestItemsAndCategoriesReportUnitsSoldInTheLastWeek(t *testing.T) {
+	h, st := categorisedMarket(t)
+	st.SaveFlows(110, time.Now(), []poller.ItemFlow{{ItemID: 7, SoldLow: 3, SoldHigh: 5}})
+	st.SaveFlows(110, time.Now().Add(-10*24*time.Hour), []poller.ItemFlow{{ItemID: 7, SoldLow: 90, SoldHigh: 90}})
+	var items []store.ItemSummary
+	json.Unmarshal(get(t, h, "/api/items?q=linen+cloth&realm=110").Body.Bytes(), &items)
+	if len(items) != 1 || items[0].SoldLow != 3 || items[0].SoldHigh != 5 {
+		t.Errorf("items = %+v, want 3 to 5 sold", items)
+	}
+	var cats []store.Category
+	json.Unmarshal(get(t, h, "/api/categories?realm=110").Body.Bytes(), &cats)
+	for _, c := range cats {
+		if c.Name == "Trade Goods" && (c.SoldLow != 3 || c.SoldHigh != 5) {
+			t.Errorf("Trade Goods = %+v, want 3 to 5 sold", c)
+		}
+	}
+}
