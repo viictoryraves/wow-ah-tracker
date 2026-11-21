@@ -195,7 +195,9 @@ never through a shell.
 - **Front page:** the empty state is a `hero` section (welcome plus category shortcuts ranked by units sold, each calling `setCategory`);
   the debounced search then browses it. It renders under the same condition as the old guidance text.
 - **Look:** a World of Warcraft mood in plain CSS: dark stone with ember gold by default, parchment in light mode, a
-  serif display face from the system stack. No Blizzard logos, artwork or web fonts are used or loaded.
+  serif display face from the system stack. No Blizzard or WoW logos or typefaces are used or imitated: the emblem (`frontend/public/logo.svg`, a gavel on a
+  gold coin, original vector art) is shown in the header and as the tab icon. The only Blizzard images are the item and
+  coin icons it serves.
 - **Styling:** one stylesheet, CSS variables, dark (default) and parchment light by `prefers-color-scheme`, 44 px targets, focus outlines,
   a two-column layout from 900 px.
 

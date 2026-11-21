@@ -78,6 +78,7 @@ One user: a Forever player on a Mac who wants to watch prices.
 | FR-3.11 | An open item's details can be closed with a Close button, the Escape key (not while typing in a field) or a click anywhere outside them. Clicking another item switches to it instead. Focus returns to the item after Close or Escape, and stays where the user clicked after an outside click. On wide screens the details panel scrolls on its own when taller than the window, so it never depends on the results list reaching its end. | ✅ |
 | FR-3.12 | Prices are shown as WoW currency, each amount followed by its gold, silver or copper coin icon (a zero part is left out); screen readers still hear g, s and c. Gold is worth 100 silver, and silver 100 copper. | ✅ |
 | FR-3.13 | The main header (the page title) is a link that returns to the front page: it clears the search, category, sort and open item and keeps the chosen market. | ✅ |
+| FR-3.14 | The page has its own emblem, shown beside the title and as the browser tab icon. It is original artwork, not a Blizzard or WoW mark. | ✅ |
 | FR-3.6 | The ruleset, faction, search, category, sort order and item are kept in the address, so a view can be shared and reloaded. An unknown market falls back to the first one. | ✅ |
 | FR-3.7 | Loading, empty and error states are shown; the page says when no market has data yet. | ✅ |
 | FR-3.8 | Keyboard focus moves to the item heading when an item is picked. | ✅ |

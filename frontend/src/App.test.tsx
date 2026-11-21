@@ -900,6 +900,13 @@ describe('closing the details', () => {
 describe('the main header', () => {
   const homeLink = () => screen.getByRole('link', { name: /wow auction prices/i })
 
+  it('carries the page emblem as a decorative image, so the link is still named by the title', async () => {
+    await renderApp()
+    const emblem = homeLink().querySelector('img')
+    expect(emblem).toHaveAttribute('src', '/logo.svg')
+    expect(emblem).toHaveAttribute('alt', '')
+  })
+
   it('brings the user back to the front page from a search with an item open', async () => {
     const { user } = await renderApp({ '/api/items?q=linen&realm=110&sort=price': [linen] })
     await search(user)

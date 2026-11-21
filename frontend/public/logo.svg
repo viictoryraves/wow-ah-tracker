@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Auction gavel on a gold coin">
+  <defs>
+    <radialGradient id="coin" cx="35%" cy="28%" r="85%">
+      <stop offset="0" stop-color="#fff1a8"/>
+      <stop offset="0.5" stop-color="#f0b429"/>
+      <stop offset="1" stop-color="#9a6208"/>
+    </radialGradient>
+    <linearGradient id="wood" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3a2a1a"/>
+      <stop offset="1" stop-color="#1b130b"/>
+    </linearGradient>
+  </defs>
+  <!-- the coin: a gold rim around a dark stone face -->
+  <circle cx="32" cy="32" r="30" fill="url(#coin)" stroke="#5c3a06" stroke-width="1.5"/>
+  <circle cx="32" cy="32" r="24.5" fill="#12161f" stroke="#f0b429" stroke-width="1"/>
+  <g stroke="#f0b429" stroke-width="1.2" stroke-linecap="round" opacity="0.7">
+    <path d="M32 9.5v3M32 51.5v3M9.5 32h3M51.5 32h3"/>
+  </g>
+  <!-- the gavel, struck down to the left -->
+  <g transform="rotate(-38 32 32)">
+    <rect x="29.2" y="26" width="5.6" height="27" rx="2.2" fill="url(#wood)" stroke="#f0b429" stroke-width="1"/>
+    <rect x="19" y="14" width="26" height="13" rx="3.5" fill="url(#coin)" stroke="#5c3a06" stroke-width="1.2"/>
+    <rect x="19" y="18.5" width="26" height="1.6" fill="#5c3a06" opacity="0.55"/>
+    <rect x="19" y="22" width="26" height="1.6" fill="#5c3a06" opacity="0.55"/>
+  </g>
+  <!-- the block it strikes -->
+  <rect x="14" y="48" width="22" height="5" rx="1.6" fill="#f0b429" stroke="#5c3a06" stroke-width="1"/>
+</svg>

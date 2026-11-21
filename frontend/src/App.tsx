@@ -315,6 +315,7 @@ export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
       <header>
         <h1>
           <a href="/" onClick={goHome}>
+            <img src="/logo.svg" alt="" width={56} height={56} className="emblem" />
             WoW Auction Prices
           </a>
         </h1>
