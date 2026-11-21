@@ -267,3 +267,30 @@ header { position: relative; }
 /* An item that is not on sale now: its price is the last one seen */
 .not-listed { font-size: 0.75rem; font-weight: 400; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; white-space: nowrap; }
 .results td.stale { color: var(--muted); font-weight: 400; }
+
+/* Investment planner */
+.planner { margin-top: 16px; }
+.planner h2 { color: var(--gold); }
+.planner-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0; }
+.planner-form .field { max-width: 280px; }
+.plan-summary { margin: 12px 0; font-weight: 600; }
+.plan-summary .muted { font-weight: 400; }
+.plan-scroll { overflow-x: auto; margin: 8px 0; }
+.plan { width: 100%; border-collapse: collapse; font-size: 0.9375rem; min-width: 640px; }
+.plan th, .plan td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.plan thead th {
+  font: 600 0.75rem/1.2 system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); text-align: left; border-bottom: 1px solid var(--gold);
+}
+.plan .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.plan .profit { color: var(--good); font-weight: 600; }
+.plan .block { display: block; }
+.risk { padding: 2px 10px; border-radius: 999px; font-weight: 600; background: var(--neutral-bg); }
+.risk[data-risk='low'] { color: var(--good); background: var(--good-bg); }
+.risk[data-risk='medium'] { color: var(--sell); background: var(--sell-bg); }
+.risk[data-risk='high'] { color: var(--bad); background: var(--bad-bg); }
+@media (max-width: 560px) {
+  .planner-form { flex-direction: column; align-items: stretch; }
+  .planner-form .field { max-width: none; }
+  .planner-form button { width: 100%; }
+}

@@ -732,3 +732,123 @@ func TestLowestFirstKeepsTheLimitOnTheCheapestItems(t *testing.T) {
 		t.Fatalf("got %v, want the single cheapest item", got)
 	}
 }
+
+// tier is a row of the latest snapshot with its cheap tier: units bought near the lowest price and their average.
+func tier(item int, min, median int64, qty, tierQty int, tierAvg int64) poller.ItemStats {
+	return poller.ItemStats{ItemID: item, Min: min, Median: median, Avg: median, Quantity: qty, CheapQty: tierQty, CheapAvg: tierAvg}
+}
+
+// market names items 1 to 5 and lists them in house 110: 1 and 2 are cheap against their median, 3 is not, 4 has no
+// tier (a row from before tiers were stored) and 5 is not named yet.
+func market(t *testing.T) *Store {
+	t.Helper()
+	s := newStore(t)
+	for id, name := range map[int]string{1: "Linen Cloth", 2: "Silk Cloth", 3: "Wool Cloth", 4: "Old Cloth"} {
+		must(t, s.SaveItem(id, name, "https://icons/"+name+".jpg", 10))
+	}
+	must(t, s.SaveItemSpanish(1, "Paño de lino", "Objeto comerciable"))
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{
+		tier(1, 100, 300, 5000, 400, 105), // net of 5% at 300 is 285: +180 per unit on 400 units
+		tier(2, 1000, 1500, 90, 3, 1010),  // net 1425: +415 per unit on 3 units
+		tier(3, 500, 510, 100, 20, 505),   // net 484 is below what it costs: no flip
+		stat(4, 100, 300, 300, 10),        // no tier stored
+		tier(5, 100, 300, 50, 10, 100),    // not named: cannot be shown
+	}))
+	return s
+}
+
+func TestInvestmentCandidatesAreTheCheapOnesWorthALookAfterTheCut(t *testing.T) {
+	s := market(t)
+	got, err := s.InvestmentCandidates(110, 5, "", 10)
+	must(t, err)
+	var ids []int
+	for _, c := range got {
+		ids = append(ids, c.ItemID)
+	}
+	// 1 first: 180 x 400 units of potential beat 2's 415 x 3
+	if len(ids) != 2 || ids[0] != 1 || ids[1] != 2 {
+		t.Fatalf("candidates %v, want [1 2]: 3 does not pay after the cut, 4 has no tier, 5 has no name", ids)
+	}
+	c := got[0]
+	if c.Name != "Linen Cloth" || c.Icon != "https://icons/Linen Cloth.jpg" || c.Min != 100 || c.Median != 300 || c.TierUnits != 400 || c.TierPrice != 105 || c.Quantity != 5000 {
+		t.Errorf("candidate = %+v", c)
+	}
+}
+
+func TestTheCutDecidesWhichItemsAreCandidates(t *testing.T) {
+	s := market(t)
+	// item 2: net at 1500 is 1275 under a 15% cut, still above 1010; item 1: 255 above 105. Item 3 never.
+	got, _ := s.InvestmentCandidates(110, 15, "", 10)
+	if len(got) != 2 {
+		t.Fatalf("got %d candidates at 15%%, want 2", len(got))
+	}
+	s2 := newStore(t)
+	must(t, s2.SaveItem(1, "Thing", "", 0))
+	must(t, s2.SaveSnapshot(110, t0, []poller.ItemStats{tier(1, 1000, 1100, 10, 10, 1000)})) // 1045 net at 5%: above 1000; 935 at 15%: below
+	if got, _ := s2.InvestmentCandidates(110, 5, "", 10); len(got) != 1 {
+		t.Errorf("at 5%% got %d, want 1", len(got))
+	}
+	if got, _ := s2.InvestmentCandidates(110, 15, "", 10); len(got) != 0 {
+		t.Errorf("at 15%% got %d, want 0", len(got))
+	}
+}
+
+func TestInvestmentCandidatesComeInSpanishAndAreLimited(t *testing.T) {
+	s := market(t)
+	es, _ := s.InvestmentCandidates(110, 5, "es", 10)
+	if len(es) != 2 || es[0].Name != "Paño de lino" || es[1].Name != "Silk Cloth" {
+		t.Errorf("names = %+v, want Spanish where known and English otherwise", es)
+	}
+	if one, _ := s.InvestmentCandidates(110, 5, "", 1); len(one) != 1 || one[0].ItemID != 1 {
+		t.Errorf("with a limit of 1 got %+v, want the best", one)
+	}
+}
+
+func TestOnlyWhatIsOnSaleNowIsACandidate(t *testing.T) {
+	s := market(t)
+	// the next snapshot no longer lists item 2
+	must(t, s.SaveSnapshot(110, t0.Add(time.Hour), []poller.ItemStats{tier(1, 100, 300, 5000, 400, 105)}))
+	got, _ := s.InvestmentCandidates(110, 5, "", 10)
+	if len(got) != 1 || got[0].ItemID != 1 {
+		t.Fatalf("got %+v, want only item 1: item 2 is not for sale any more", got)
+	}
+	if other, _ := s.InvestmentCandidates(113, 5, "", 10); len(other) != 0 {
+		t.Errorf("another house has %d candidates, want none", len(other))
+	}
+}
+
+func TestTheSalePriceIsWhatTheUnitsThatLeftWereWorth(t *testing.T) {
+	s := newStore(t)
+	must(t, s.SaveFlows(110, t0, []poller.ItemFlow{{ItemID: 7, SoldLow: 10, SoldHigh: 12, SoldValueLow: 10 * 200}}))
+	must(t, s.SaveFlows(110, t0.Add(time.Hour), []poller.ItemFlow{{ItemID: 7, SoldLow: 30, SoldHigh: 30, SoldValueLow: 30 * 400}}))
+	must(t, s.SaveFlows(110, t0.Add(-72*time.Hour), []poller.ItemFlow{{ItemID: 7, SoldLow: 99, SoldHigh: 99, SoldValueLow: 99 * 9999}})) // too old
+	must(t, s.SaveFlows(113, t0, []poller.ItemFlow{{ItemID: 7, SoldLow: 99, SoldHigh: 99, SoldValueLow: 99 * 9999}}))                    // another house
+	price, units, err := s.SalePrice(110, 7, t0.Add(-24*time.Hour))
+	must(t, err)
+	// (2000 + 12000) / 40 units = 350 a unit: weighted by units, not an average of two averages
+	if price != 350 || units != 40 {
+		t.Errorf("price %d over %d units, want 350 over 40", price, units)
+	}
+}
+
+func TestWithoutAnyUnitsThatLeftThereIsNoSalePrice(t *testing.T) {
+	s := newStore(t)
+	price, units, err := s.SalePrice(110, 7, t0)
+	must(t, err)
+	if price != 0 || units != 0 {
+		t.Errorf("price %d over %d units, want none", price, units)
+	}
+}
+
+func TestFlowsStoredBeforeTheirValueWasKnownAreLeftOutOfTheSalePrice(t *testing.T) {
+	s := newStore(t)
+	// a flow from before values were recorded: the column is NULL, not 0
+	if _, err := s.db.Exec(`INSERT INTO flows (house_id,item_id,ts,sold_low,sold_high,sales,listed) VALUES (110,7,?,50,50,5,0)`, t0.Unix()); err != nil {
+		t.Fatal(err)
+	}
+	must(t, s.SaveFlows(110, t0.Add(time.Hour), []poller.ItemFlow{{ItemID: 7, SoldLow: 10, SoldHigh: 10, SoldValueLow: 1000}}))
+	price, units, _ := s.SalePrice(110, 7, t0.Add(-time.Hour))
+	if price != 100 || units != 10 {
+		t.Errorf("price %d over %d units, want 100 over 10: the 50 old units have no value and must not drag it to zero", price, units)
+	}
+}

@@ -20,6 +20,9 @@ type ItemFlow struct {
 	SoldLow int
 	// SoldHigh counts every unit that left, including listings that may simply have expired.
 	SoldHigh int
+	// SoldValueLow is what the SoldLow units were listed at, in copper: the price they left the market at.
+	// SoldValueLow / SoldLow is the sale price: not the asking price of what still sits unsold.
+	SoldValueLow int64
 	// Sales is the number of listings that vanished or shrank: an upper bound on
 	// transactions, and the closest thing to a count of buyers that exists (one buyer
 	// can account for several).
@@ -73,12 +76,14 @@ func Flows(prev, cur []blizzard.Auction, gap time.Duration) []ItemFlow {
 			f.Sales++
 			if floor, known := timeLeftFloor[p.TimeLeft]; known && floor > gap {
 				f.SoldLow += p.Quantity // it had longer left than the gap, so it did not simply expire
+				f.SoldValueLow += p.Buyout
 			}
 		case c.Quantity < p.Quantity: // part of a stack was bought: nothing else shrinks a listing
 			f := flow(p.ItemID)
 			units := p.Quantity - c.Quantity
 			f.SoldLow += units
 			f.SoldHigh += units
+			f.SoldValueLow += p.Buyout / int64(p.Quantity) * int64(units)
 			f.Sales++
 		}
 	}

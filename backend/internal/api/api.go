@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/manuel/wow-ah-tracker/internal/insights"
+	"github.com/manuel/wow-ah-tracker/internal/invest"
+	"github.com/manuel/wow-ah-tracker/internal/poller"
 	"github.com/manuel/wow-ah-tracker/internal/rates"
 	"github.com/manuel/wow-ah-tracker/internal/store"
 )
@@ -64,6 +66,7 @@ func Handler(st *store.Store, realms []Realm, maxDays int, rules Rules) http.Han
 	mux.HandleFunc("/api/items", s.searchItems)
 	mux.HandleFunc("/api/categories", s.listCategories)
 	mux.HandleFunc("/api/status", s.status)
+	mux.HandleFunc("/api/plan", s.plan)
 	mux.HandleFunc("/api/items/", s.item)
 	return mux
 }
@@ -288,7 +291,18 @@ func (s *server) item(w http.ResponseWriter, r *http.Request) {
 	}
 	in = insights.Advise(in, insights.Facts{Commodity: facts.Commodity, VendorSell: facts.VendorSell}, depositRate)
 
-	// Demand is read over the last week only, so it reflects how the item sells now.
+	d, err := s.demandFor(realm, itemID, pts)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	in.Demand = &d
+	writeJSON(w, in)
+}
+
+// demandFor reads an item's demand from the last demandDays only, so it reflects how the item sells now.
+// pts are the item's snapshots, oldest first.
+func (s *server) demandFor(realm, itemID int, pts []store.Point) (insights.Demand, error) {
 	recent := time.Now().Add(-demandDays * 24 * time.Hour)
 	var recentPts []store.Point
 	for _, p := range pts {
@@ -298,12 +312,9 @@ func (s *server) item(w http.ResponseWriter, r *http.Request) {
 	}
 	flows, err := s.st.FlowHistory(realm, itemID, recent)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return insights.Demand{}, err
 	}
-	d := insights.ComputeDemand(recentPts, flows)
-	in.Demand = &d
-	writeJSON(w, in)
+	return insights.ComputeDemand(recentPts, flows), nil
 }
 
 // demandDays is how many days of sales volume the demand reading covers.
@@ -363,4 +374,107 @@ func (s *server) realmParam(w http.ResponseWriter, r *http.Request) (int, bool) 
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// planCandidates is how many of the cheapest-looking items the plan studies closely (their history and sales).
+const planCandidates = 200
+
+type planPick struct {
+	ID         int     `json:"id"`
+	Name       string  `json:"name"`
+	Icon       string  `json:"icon"`
+	Units      int     `json:"units"`      // how many to buy
+	Buy        int64   `json:"buy"`        // average price per unit
+	Sell       int64   `json:"sell"`       // the usual price it sells at
+	Net        int64   `json:"net"`        // what is left of it after the cut
+	Cost       int64   `json:"cost"`       // Units x Buy
+	Profit     int64   `json:"profit"`     // what it earns after the cut
+	ReturnPct  float64 `json:"returnPct"`  // Profit / Cost
+	RiskPct    float64 `json:"riskPct"`    // 0 to 100
+	DaysToSell float64 `json:"daysToSell"` // how long the market takes to absorb the units
+}
+
+type planResponse struct {
+	Budget     int64      `json:"budget"`
+	Spent      int64      `json:"spent"`
+	Unspent    int64      `json:"unspent"`
+	Revenue    int64      `json:"revenue"` // what the units bring in after the cut
+	Profit     int64      `json:"profit"`
+	ReturnPct  float64    `json:"returnPct"`
+	CutPercent float64    `json:"cutPercent"` // the cut this market takes from every sale
+	Picks      []planPick `json:"picks"`
+}
+
+// plan serves /api/plan?realm=&budget=&lang=: what to buy with budget copper in this market, how many of each,
+// what to expect from selling them after the auction house cut, and how risky each one is. An item only shows up
+// while it is on sale cheaply (its lowest tier costs less than its usual asking price after the cut), and it is
+// expected to sell at the price units really left the market at, never above the usual asking price: what
+// sellers ask is not what buyers pay.
+func (s *server) plan(w http.ResponseWriter, r *http.Request) {
+	realm, ok := s.realmParam(w, r)
+	if !ok {
+		return
+	}
+	lang, ok := langParam(w, r)
+	if !ok {
+		return
+	}
+	budget, err := strconv.ParseInt(r.URL.Query().Get("budget"), 10, 64)
+	if err != nil || budget <= 0 || budget > poller.MaxUnitPrice { // no character holds more than that
+		http.Error(w, "budget must be a whole number of copper from 1 to 2147483647", http.StatusBadRequest)
+		return
+	}
+	cut, _ := s.rulesFor(realm)
+	found, err := s.st.InvestmentCandidates(realm, cut, lang, planCandidates)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	since := time.Now().Add(-time.Duration(s.maxDays) * 24 * time.Hour)
+	var candidates []invest.Candidate
+	byID := map[int]store.Opportunity{}
+	for _, o := range found {
+		pts, err := s.st.History(realm, o.ItemID, since)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		in, ok := insights.Compute(pts, cut)
+		if !ok {
+			continue
+		}
+		d, err := s.demandFor(realm, o.ItemID, pts)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		salePrice, sold, err := s.st.SalePrice(realm, o.ItemID, time.Now().Add(-demandDays*24*time.Hour))
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		medians := make([]int64, len(pts))
+		for i, p := range pts {
+			medians[i] = p.Median
+		}
+		byID[o.ItemID] = o
+		candidates = append(candidates, invest.Candidate{
+			ItemID: o.ItemID, TierUnits: o.TierUnits, TierPrice: o.TierPrice, MarketValue: in.MarketValue,
+			SalePrice: salePrice, SoldUnits: sold, Listed: o.Quantity,
+			Medians: medians, SoldPerDayLow: d.PerDayLow, ObservedHours: d.ObservedHours,
+		})
+	}
+	plan := invest.Make(budget, cut, candidates)
+	out := planResponse{
+		Budget: plan.Budget, Spent: plan.Spent, Unspent: plan.Budget - plan.Spent, Revenue: plan.Revenue,
+		Profit: plan.Profit, ReturnPct: plan.ReturnPct, CutPercent: cut, Picks: []planPick{},
+	}
+	for _, p := range plan.Picks {
+		o := byID[p.ItemID]
+		out.Picks = append(out.Picks, planPick{
+			ID: p.ItemID, Name: o.Name, Icon: o.Icon, Units: p.Units, Buy: p.Buy, Sell: p.Sell, Net: p.Net,
+			Cost: p.Cost, Profit: p.Profit, ReturnPct: p.ReturnPct, RiskPct: p.RiskPct, DaysToSell: p.DaysToSell,
+		})
+	}
+	writeJSON(w, out)
 }

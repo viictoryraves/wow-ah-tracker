@@ -112,3 +112,25 @@ func TestAnUnknownTimeLeftIsNeverTreatedAsSafe(t *testing.T) {
 		t.Errorf("flow = %+v, want only the high estimate", f)
 	}
 }
+
+// The value of the units that left is what they were listed at: the price they sold or were cancelled at.
+func TestTheValueOfTheUnitsThatLeftIsWhatTheyWereListedAt(t *testing.T) {
+	prev := []blizzard.Auction{
+		lst(1, 7, 20, "LONG"),  // 100 a unit: 2000 left the market
+		lst(2, 7, 5, "MEDIUM"), // may have expired: not counted, in value or in units
+		{ID: 3, ItemID: 7, Buyout: 3000, Quantity: 10, TimeLeft: "VERY_LONG"}, // 300 a unit
+	}
+	f := flowOf(t, Flows(prev, nil, hour), 7)
+	if f.SoldLow != 30 || f.SoldValueLow != 2000+3000 {
+		t.Errorf("flow = %+v, want 30 units worth 5000 in the low estimate", f)
+	}
+}
+
+func TestABoughtOutPartOfAStackIsWorthItsUnitPrice(t *testing.T) {
+	prev := []blizzard.Auction{{ID: 1, ItemID: 7, Buyout: 2000, Quantity: 20, TimeLeft: "SHORT"}} // 100 a unit
+	cur := []blizzard.Auction{{ID: 1, ItemID: 7, Buyout: 1500, Quantity: 15, TimeLeft: "SHORT"}}
+	f := flowOf(t, Flows(prev, cur, hour), 7)
+	if f.SoldLow != 5 || f.SoldValueLow != 500 {
+		t.Errorf("flow = %+v, want 5 units worth 500", f)
+	}
+}

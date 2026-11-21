@@ -1165,3 +1165,62 @@ describe('an item that is not on sale now', () => {
     expect(within(row).getByText(/no está a la venta ahora/i)).toBeInTheDocument()
   })
 })
+
+describe('the investment planner on the front page', () => {
+  const planBody = {
+    budget: 5_000_000, spent: 101000, unspent: 4_899_000, revenue: 285000, profit: 184000, returnPct: 182.2, cutPercent: 5,
+    picks: [{ id: 7, name: 'Linen Cloth', icon: '', units: 100, buy: 1010, sell: 3000, net: 2850, cost: 101000, profit: 184000, returnPct: 182.2, riskPct: 9.4, daysToSell: 0.8 }],
+  }
+  const budget = () => screen.getByLabelText(/gold to invest/i)
+  const ask = async (user: ReturnType<typeof userEvent.setup>, gold = '500') => {
+    await user.type(budget(), gold)
+    await user.click(screen.getByRole('button', { name: /find the best buys/i }))
+  }
+
+  it('is part of the front page, beside the categories', async () => {
+    await renderApp()
+    expect(await screen.findByRole('heading', { level: 2, name: /investment planner/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: /find your fortune/i })).toBeInTheDocument()
+  })
+
+  it('asks for the plan of the market on screen', async () => {
+    const { user, calls } = await renderApp({ '/api/plan?realm=110&budget=5000000': planBody })
+    await ask(user)
+    expect(await screen.findByRole('table', { name: '' })).toBeInTheDocument()
+    expect(calls).toContain('/api/plan?realm=110&budget=5000000')
+  })
+
+  it('gives way to the results of a search, and comes back with the main header', async () => {
+    const { user } = await renderApp()
+    await search(user)
+    await screen.findByRole('button', { name: /linen cloth/i })
+    expect(screen.queryByRole('heading', { level: 2, name: /investment planner/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('link', { name: /wow auction prices/i }))
+    expect(await screen.findByRole('heading', { level: 2, name: /investment planner/i })).toBeInTheDocument()
+  })
+
+  it('opens the details of an item picked from the plan', async () => {
+    const { user } = await renderApp({
+      '/api/plan?realm=110&budget=5000000': planBody,
+      '/api/items?q=Linen%20Cloth&realm=110': [linen],
+    })
+    await ask(user)
+    await user.click(await screen.findByRole('button', { name: /linen cloth/i }))
+    expect(await screen.findByRole('region', { name: /linen cloth details/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/search items/i)).toHaveValue('Linen Cloth')
+    expect(screen.queryByRole('heading', { level: 2, name: /investment planner/i })).not.toBeInTheDocument()
+  })
+
+  it('starts over when the faction changes, because the prices belong to a market', async () => {
+    const { user } = await renderApp({
+      '/api/plan?realm=110&budget=5000000': planBody,
+      '/api/categories?realm=113': categories,
+      '/api/status?realm=113': { updatedAt: UPDATED },
+    })
+    await ask(user)
+    await screen.findByRole('table')
+    await user.selectOptions(screen.getByLabelText(/^faction$/i), '113')
+    await waitFor(() => expect(screen.queryByRole('table')).not.toBeInTheDocument())
+    expect(budget()).toHaveValue('')
+  })
+})

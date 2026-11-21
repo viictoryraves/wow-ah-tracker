@@ -134,3 +134,34 @@ export async function fetchInsights(itemId: number, realm: number): Promise<Insi
   if (!res.ok) throw new Error(`insights: ${res.status}`)
   return res.json() as Promise<Insights>
 }
+
+/** One item of the investment plan. Prices are copper per unit. */
+export interface PlanPick {
+  id: number
+  name: string
+  icon: string
+  units: number // how many to buy
+  buy: number // average price paid
+  sell: number // the usual price it sells at
+  net: number // what is left of sell after the auction house cut
+  cost: number
+  profit: number // after the cut
+  returnPct: number
+  riskPct: number // 0 to 100
+  daysToSell: number
+}
+
+export interface Plan {
+  budget: number
+  spent: number
+  unspent: number
+  revenue: number // what the units bring in after the cut
+  profit: number
+  returnPct: number
+  cutPercent: number
+  picks: PlanPick[]
+}
+
+/** What to buy with `budget` copper in a market, how many of each and what it should earn. */
+export const fetchPlan = (realm: number, budget: number, lang: Lang = 'en') =>
+  getJSON<Plan>(`/api/plan?realm=${realm}&budget=${budget}${lang === 'es' ? '&lang=es' : ''}`)

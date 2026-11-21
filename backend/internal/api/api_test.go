@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -715,5 +716,163 @@ func TestAnUnknownDirectionIsRejected(t *testing.T) {
 	h, _ := categorisedMarket(t)
 	if rec := get(t, h, "/api/items?realm=110&category=7&sort=price&dir=sideways"); rec.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", rec.Code)
+	}
+}
+
+// --- the investment plan ---
+
+// flipMarket has item 7 on sale in house 110 at a lowest price far below its usual one, with a deep cheap tier and
+// brisk sales at that usual price: twelve hourly snapshots with a median of 3000, and units leaving between them at 3000.
+func flipMarket(t *testing.T) (http.Handler, *store.Store) {
+	return flipMarketSellingAt(t, 3000)
+}
+
+// flipMarketSellingAt is flipMarket with the units leaving the market at the given price.
+func flipMarketSellingAt(t *testing.T, sold int64) (http.Handler, *store.Store) {
+	t.Helper()
+	h, st := setup(t)
+	st.SaveItem(7, "Linen Cloth", "https://icons/linen.jpg", 13)
+	st.SaveItemSpanish(7, "Paño de lino", "Objeto comerciable")
+	now := time.Now().Truncate(time.Second)
+	for i := 11; i >= 0; i-- {
+		ts := now.Add(-time.Duration(i) * time.Hour)
+		save(t, st, 110, ts, poller.ItemStats{ItemID: 7, Min: 1000, Median: 3000, Avg: 3000, Quantity: 150, CheapQty: 100, CheapAvg: 1010})
+		st.SaveFlows(110, ts, []poller.ItemFlow{{ItemID: 7, SoldLow: 5, SoldHigh: 8, Sales: 3, SoldValueLow: 5 * sold}})
+	}
+	return h, st
+}
+
+type planBody struct {
+	Budget     int64   `json:"budget"`
+	Spent      int64   `json:"spent"`
+	Unspent    int64   `json:"unspent"`
+	Revenue    int64   `json:"revenue"`
+	Profit     int64   `json:"profit"`
+	ReturnPct  float64 `json:"returnPct"`
+	CutPercent float64 `json:"cutPercent"`
+	Picks      []struct {
+		ID        int     `json:"id"`
+		Name      string  `json:"name"`
+		Icon      string  `json:"icon"`
+		Units     int     `json:"units"`
+		Buy       int64   `json:"buy"`
+		Sell      int64   `json:"sell"`
+		Net       int64   `json:"net"`
+		Cost      int64   `json:"cost"`
+		Profit    int64   `json:"profit"`
+		ReturnPct float64 `json:"returnPct"`
+		RiskPct   float64 `json:"riskPct"`
+	} `json:"picks"`
+}
+
+func TestThePlanBuysTheCheapTierAndSellsAtTheUsualPriceAfterTheCut(t *testing.T) {
+	h, _ := flipMarket(t)
+	var got planBody
+	rec := get(t, h, "/api/plan?realm=110&budget=10000000")
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body)
+	}
+	if len(got.Picks) != 1 {
+		t.Fatalf("picks = %+v, want the one flip", got.Picks)
+	}
+	p := got.Picks[0]
+	if p.ID != 7 || p.Name != "Linen Cloth" || p.Icon != "https://icons/linen.jpg" {
+		t.Errorf("pick = %+v", p)
+	}
+	// 100 units in the tier at 1010; sells at 3000 less the 5% cut = 2850
+	if p.Units != 100 || p.Buy != 1010 || p.Sell != 3000 || p.Net != 2850 || p.Cost != 101000 || p.Profit != 100*(2850-1010) {
+		t.Errorf("pick = %+v, want 100 units bought at 1010 and sold at 3000 (2850 after the cut)", p)
+	}
+	if got.CutPercent != 5 || got.Budget != 10000000 || got.Spent != 101000 || got.Unspent != 10000000-101000 || got.Profit != p.Profit {
+		t.Errorf("totals = %+v", got)
+	}
+	if p.RiskPct <= 0 || p.RiskPct >= 100 {
+		t.Errorf("risk = %.1f%%, want a share between 0 and 100", p.RiskPct)
+	}
+}
+
+func TestThePlanUsesTheBlackwaterCutThere(t *testing.T) {
+	h, st := flipMarket(t)
+	now := time.Now().Truncate(time.Second)
+	for i := 11; i >= 0; i-- {
+		ts := now.Add(-time.Duration(i) * time.Hour)
+		save(t, st, 116, ts, poller.ItemStats{ItemID: 7, Min: 1000, Median: 3000, Avg: 3000, Quantity: 150, CheapQty: 100, CheapAvg: 1010})
+		st.SaveFlows(116, ts, []poller.ItemFlow{{ItemID: 7, SoldLow: 5, SoldHigh: 8, Sales: 3, SoldValueLow: 5 * 3000}})
+	}
+	var got planBody
+	json.Unmarshal(get(t, h, "/api/plan?realm=116&budget=10000000").Body.Bytes(), &got)
+	if got.CutPercent != 15 || len(got.Picks) != 1 || got.Picks[0].Net != 2550 {
+		t.Errorf("got %+v, want the 15%% cut (3000 -> 2550)", got)
+	}
+}
+
+func TestThePlanComesInSpanishWhenAsked(t *testing.T) {
+	h, _ := flipMarket(t)
+	var got planBody
+	json.Unmarshal(get(t, h, "/api/plan?realm=110&budget=10000000&lang=es").Body.Bytes(), &got)
+	if len(got.Picks) != 1 || got.Picks[0].Name != "Paño de lino" {
+		t.Errorf("picks = %+v, want the Spanish name", got.Picks)
+	}
+}
+
+func TestAPlanWithNothingWorthBuyingHasAnEmptyListNotNull(t *testing.T) {
+	h, st := setup(t)
+	save(t, st, 110, time.Now(), stat(7, 90, 8))
+	rec := get(t, h, "/api/plan?realm=110&budget=100000")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"picks":[]`) {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body)
+	}
+}
+
+func TestAPlanNeedsAnAmountOfMoneyACharacterCouldHold(t *testing.T) {
+	h, _ := flipMarket(t)
+	for _, q := range []string{"", "budget=", "budget=0", "budget=-5", "budget=abc", "budget=1.5", "budget=2147483648"} {
+		if rec := get(t, h, "/api/plan?realm=110&"+q); rec.Code != http.StatusBadRequest {
+			t.Errorf("%q: code = %d, want 400", q, rec.Code)
+		}
+	}
+	if rec := get(t, h, "/api/plan?realm=110&budget=2147483647"); rec.Code != 200 {
+		t.Errorf("the most a character can hold: code = %d, want 200", rec.Code)
+	}
+	if rec := get(t, h, "/api/plan?realm=999&budget=1000"); rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown market: code = %d, want 400", rec.Code)
+	}
+	if rec := get(t, h, "/api/plan?realm=110&budget=1000&lang=klingon"); rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown language: code = %d, want 400", rec.Code)
+	}
+}
+
+func TestThePlanSellsAtWhatUnitsReallyWentForNotAtTheAskingPrice(t *testing.T) {
+	h, _ := flipMarketSellingAt(t, 1500) // listed at 3000, but the units that left went for 1500
+	var got planBody
+	json.Unmarshal(get(t, h, "/api/plan?realm=110&budget=10000000").Body.Bytes(), &got)
+	if len(got.Picks) != 1 || got.Picks[0].Sell != 1500 || got.Picks[0].Net != 1425 {
+		t.Errorf("picks = %+v, want it sold at 1500 (1425 after the cut)", got.Picks)
+	}
+}
+
+func TestThePlanLeavesOutAnItemWhoseUnitsWentForLessThanItCosts(t *testing.T) {
+	h, _ := flipMarketSellingAt(t, 1000) // listed at 3000 but bought and sold around what it costs now
+	var got planBody
+	json.Unmarshal(get(t, h, "/api/plan?realm=110&budget=10000000").Body.Bytes(), &got)
+	if len(got.Picks) != 0 {
+		t.Errorf("picks = %+v, want none: nothing sold anywhere near the asking price", got.Picks)
+	}
+}
+
+func TestThePlanNeedsToHaveSeenUnitsLeaveTheMarket(t *testing.T) {
+	h, st := setup(t)
+	st.SaveItem(7, "Linen Cloth", "", 13)
+	now := time.Now().Truncate(time.Second)
+	for i := 11; i >= 0; i-- {
+		ts := now.Add(-time.Duration(i) * time.Hour)
+		save(t, st, 110, ts, poller.ItemStats{ItemID: 7, Min: 1000, Median: 3000, Avg: 3000, Quantity: 150, CheapQty: 100, CheapAvg: 1010})
+		// flows measured before their value was recorded: units left, but at no known price
+		st.SaveFlows(110, ts, []poller.ItemFlow{{ItemID: 7, SoldLow: 5, SoldHigh: 8, Sales: 3}})
+	}
+	var got planBody
+	json.Unmarshal(get(t, h, "/api/plan?realm=110&budget=10000000").Body.Bytes(), &got)
+	if len(got.Picks) != 0 {
+		t.Errorf("picks = %+v, want none without a known sale price", got.Picks)
 	}
 }

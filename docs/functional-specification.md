@@ -147,6 +147,19 @@ Blizzard publishes no sales and no buyers, so these are **estimates** from listi
 | FR-8.4 | An existing database is upgraded in place when new columns or tables are needed. | ✅ |
 | FR-8.5 | The server also serves the JSON API used by the web app. | ✅ |
 
+### 3.9 Investment planner
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-9.1 | The front page has an **investment planner**: the user types an amount of gold (a point or a comma as the decimal mark, from one copper to what a character can hold, 214,748g) and gets up to ten items to buy with it in the market on screen. Anything else is refused with a message. | ✅ |
+| FR-9.2 | For each item the planner shows what to **buy** (units and the average price paid), what to **sell** it at, what it costs, what it earns, the return and the risk. Picking an item opens its details. | ✅ |
+| FR-9.3 | **The auction house cut is taken into account** (5%, or 15% at Blackwater, or the house's own rate): the profit is what is left after it, and an item that would not earn after the cut is not offered. A return under 5% is not worth the trouble and is left out. | ✅ |
+| FR-9.4 | Units are bought from the item's **cheap tier**, the listings within 10% of the lowest price, at their average price. The number to buy is limited by what that tier holds, by what the market sells in two days once the stock listed ahead of a new listing has sold, and by 30% of the budget in one item (one unit is always allowed if the budget covers it). Money that cannot be placed is reported as left over. | ✅ |
+| FR-9.5 | The price to sell at is **where units really left the market** (the value of the units that vanished and could not have expired, per unit), and never more than the usual asking price (the median of the hourly medians): what sellers ask is not what buyers pay. An item needs at least 5 such units, 6 hourly snapshots and 3 hours of measured sales to be considered. | ✅ |
+| FR-9.6 | The **risk** is a percentage, also written as Low (under 15%), Medium (under 35%) or High. It combines how often the market paid less than the break-even price in the history (the price that gives back the cost after the cut; smoothed, so a short history is never a sure thing) and how long selling takes (days to sell, which count the stock ahead; 30 days would be certain). The days to sell are shown on hover. | ✅ |
+| FR-9.7 | The best items by return adjusted for risk come first. The plan says what it spends, what it earns after the cut, the return and what is left over, and states that it is an estimate, not advice, that deposits are not counted and that prices move. | ✅ |
+| FR-9.8 | The planner follows the page language (names, labels, numbers) and starts over when the market changes. When nothing qualifies it says so and why it may be early. | ✅ |
+
 ## 4. Non-functional requirements
 
 | ID | Requirement | Status |
@@ -164,6 +177,7 @@ Blizzard publishes no sales and no buyers, so these are **estimates** from listi
 - Only the **current** auction house is available from Blizzard: gaps while the Mac sleeps cannot be filled.
 - **Sales volume is an estimate.** Cancel-and-relist counts as a sale; the low estimate can be zero while the high one is large.
 - **Deposit formula** is the Classic rule and is unconfirmed for Forever.
+- **The planner is an estimate.** Blizzard publishes no sales, so the sale price comes from listings that vanished (cancel-and-relist noise remains); the price ladder is summarised by the cheap tier, so buying beyond it, or in a thin market, moves the price; the stock ahead of a new listing is taken as half of what is listed; and past prices do not promise the next ones. Right after an upgrade it needs an hour or two to measure sale prices.
 - **Ruleset to house mapping** is inferred (FR-1.12).
 - **Roleplay and Roleplay PvP** are lightly verified.
 - **Region:** EU is the tested region; others should work but are untested.
@@ -180,6 +194,7 @@ Blizzard publishes no sales and no buyers, so these are **estimates** from listi
 | Sales and demand | FR-5.* | `poller/flow.go`, `insights/demand.go` | `flow_test.go`, `demand_test.go` |
 | House rules | FR-6.* | `rates` | `rates_test.go` |
 | Notifications | FR-7.4–7.6 | `notify` | `notify_test.go` |
+| Investment planner | FR-9.* | `invest`, `api` (`/api/plan`), `poller` (cheap tier, flow value), `InvestmentPlanner.tsx` | `invest_test.go`, `api_test.go`, `reduce_test.go`, `flow_test.go`, `InvestmentPlanner.test.tsx` |
 | Operations | FR-8.* | `scripts/`, `cmd/server` | manual (see README) |
 
 ## Revision history
@@ -187,3 +202,4 @@ Blizzard publishes no sales and no buyers, so these are **estimates** from listi
 | Date | Change |
 |---|---|
 | 2026-11-21 | First version, describing everything implemented to date: collection on Blizzard's schedule, history, search and categories, insights, sales volume, live house rates, notifications and the last-update label with automatic refresh. |
+| 2026-11-21 | Added the investment planner (FR-9.*): budget in, up to ten items to buy with units, buy and sell prices after the cut, profit, return and risk. |

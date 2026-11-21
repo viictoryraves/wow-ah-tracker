@@ -9,6 +9,7 @@ import { useI18n } from './i18nContext'
 import type { Key, Lang } from './i18n'
 import { Money } from './Money'
 import { InsightsPanel } from './InsightsPanel'
+import { InvestmentPlanner } from './InvestmentPlanner'
 import { PriceChart } from './PriceChart'
 import { factionKey, realmOfMarket } from './realms'
 
@@ -342,6 +343,17 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
       return { sort: '', dir: 'desc' }
     })
 
+  // Open an item picked from the investment plan: search for it by name and select it when it arrives.
+  const openItem = (id: number, name: string) => {
+    if (realm === undefined) return
+    const plain: Order = { sort: '', dir: 'desc' }
+    pendingItem.current = id
+    setQuery(name)
+    setCategory(undefined)
+    setOrder(plain)
+    runSearch(name.trim(), realm, undefined, plain)
+  }
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     if ((typed || category !== undefined) && realm !== undefined) runSearch(typed, realm, category, order)
@@ -437,27 +449,30 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
               <p className="muted hint">{t('noData')}</p>
             )}
             {!(realmsLoaded && realms.length === 0) && !results && !searching && !error && (
-              <section className="hero" aria-label={t('welcome')}>
-                <h2>{t('heroTitle')}</h2>
-                <p>{t('heroText')}</p>
-                {categories.length > 0 && (
-                  <>
-                    <ul className="shortcuts" aria-label={t('browseByCategory')}>
-                      {[...categories]
-                        .sort((a, b) => b.soldHigh - a.soldHigh || a.name.localeCompare(b.name))
-                        .map((c) => (
-                          <li key={c.id}>
-                            <button type="button" onClick={() => setCategory(c.id)}>
-                              <span>{c.name}</span>
-                              <span className="sold">{formatSold(c.soldLow, c.soldHigh, lang)}</span>
-                            </button>
-                          </li>
-                        ))}
-                    </ul>
-                    <p className="small muted">{t('categoriesRanked')}</p>
-                  </>
-                )}
-              </section>
+              <>
+                <section className="hero" aria-label={t('welcome')}>
+                  <h2>{t('heroTitle')}</h2>
+                  <p>{t('heroText')}</p>
+                  {categories.length > 0 && (
+                    <>
+                      <ul className="shortcuts" aria-label={t('browseByCategory')}>
+                        {[...categories]
+                          .sort((a, b) => b.soldHigh - a.soldHigh || a.name.localeCompare(b.name))
+                          .map((c) => (
+                            <li key={c.id}>
+                              <button type="button" onClick={() => setCategory(c.id)}>
+                                <span>{c.name}</span>
+                                <span className="sold">{formatSold(c.soldLow, c.soldHigh, lang)}</span>
+                              </button>
+                            </li>
+                          ))}
+                      </ul>
+                      <p className="small muted">{t('categoriesRanked')}</p>
+                    </>
+                  )}
+                </section>
+                <InvestmentPlanner key={realm} realm={realm} onOpenItem={openItem} />
+              </>
             )}
             {searching && <p className="muted hint">{t('searching')}</p>}
             {results && results.length === 0 && <p className="muted hint">{t('noItems')}</p>}

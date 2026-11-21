@@ -62,6 +62,17 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// NULL, not 0, for rows from before the value of what sold was recorded: they say nothing about prices.
+	if err := addColumn(db, "flows", "sold_value_low", "INTEGER"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	for _, col := range [][2]string{{"cheap_qty", "INTEGER"}, {"cheap_avg", "INTEGER"}} { // the cheap tier of a snapshot row
+		if err := addColumn(db, "snapshots", col[0], col[1]); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	for _, col := range [][2]string{{"icon", "TEXT"}, {"vendor_sell", "INTEGER"}, {"class_id", "INTEGER"}, {"class_name", "TEXT"}, {"name_es", "TEXT"}, {"class_name_es", "TEXT"}} {
 		if err := addColumn(db, "items", col[0], col[1]); err != nil {
 			db.Close()
@@ -105,13 +116,13 @@ func (s *Store) SaveSnapshot(realmID int, ts time.Time, stats []poller.ItemStats
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO snapshots (realm_id,item_id,ts,min,median,avg,quantity) VALUES (?,?,?,?,?,?,?)`)
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO snapshots (realm_id,item_id,ts,min,median,avg,quantity,cheap_qty,cheap_avg) VALUES (?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, st := range stats {
-		if _, err := stmt.Exec(realmID, st.ItemID, ts.Unix(), st.Min, st.Median, st.Avg, st.Quantity); err != nil {
+		if _, err := stmt.Exec(realmID, st.ItemID, ts.Unix(), st.Min, st.Median, st.Avg, st.Quantity, st.CheapQty, st.CheapAvg); err != nil {
 			return err
 		}
 	}
@@ -198,13 +209,13 @@ func (s *Store) SaveFlows(houseID int, ts time.Time, flows []poller.ItemFlow) er
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO flows (house_id,item_id,ts,sold_low,sold_high,sales,listed) VALUES (?,?,?,?,?,?,?)`)
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO flows (house_id,item_id,ts,sold_low,sold_high,sales,listed,sold_value_low) VALUES (?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, f := range flows {
-		if _, err := stmt.Exec(houseID, f.ItemID, ts.Unix(), f.SoldLow, f.SoldHigh, f.Sales, f.Listed); err != nil {
+		if _, err := stmt.Exec(houseID, f.ItemID, ts.Unix(), f.SoldLow, f.SoldHigh, f.Sales, f.Listed, f.SoldValueLow); err != nil {
 			return err
 		}
 	}
@@ -218,6 +229,20 @@ type FlowPoint struct {
 	SoldHigh int       `json:"soldHigh"`
 	Sales    int       `json:"sales"`
 	Listed   int       `json:"listed"`
+}
+
+// SalePrice is the price per unit at which an item's units left the market since the given time: what they
+// were listed at, weighted by units (the SoldLow estimate, which leaves out listings that may simply have
+// expired), and over how many units. Flows stored before their value was recorded are left out. It is 0
+// over 0 units when nothing left.
+func (s *Store) SalePrice(houseID, itemID int, since time.Time) (price int64, units int, err error) {
+	var value int64
+	err = s.db.QueryRow(`SELECT COALESCE(SUM(sold_value_low), 0), COALESCE(SUM(CASE WHEN sold_value_low IS NOT NULL THEN sold_low END), 0)
+		FROM flows WHERE house_id = ? AND item_id = ? AND ts >= ?`, houseID, itemID, since.Unix()).Scan(&value, &units)
+	if err != nil || units == 0 {
+		return 0, 0, err
+	}
+	return (value + int64(units)/2) / int64(units), units, nil
 }
 
 // FlowHistory returns an item's flows in a house since the given time, oldest first.
@@ -465,6 +490,50 @@ func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
 			return nil, err
 		}
 		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// Opportunity is an item on sale now that looks worth buying: its cheap tier sells for less than its median
+// price even after the auction house cut. The planner takes a closer look at these.
+type Opportunity struct {
+	ItemID    int
+	Name      string
+	Icon      string
+	Min       int64
+	Median    int64
+	Quantity  int   // every unit listed
+	TierUnits int   // units priced within a few percent of the lowest
+	TierPrice int64 // their average price per unit
+}
+
+// InvestmentCandidates lists up to limit named items on sale in the market's latest snapshot whose cheap tier
+// costs less than their median price after cutPercent, the ones with the most to gain (the profit per unit
+// times the units of the tier) first. Names come in Spanish when lang is "es" and the item has one.
+func (s *Store) InvestmentCandidates(houseID int, cutPercent float64, lang string, limit int) ([]Opportunity, error) {
+	name := "i.name"
+	if lang == LangSpanish {
+		name = "COALESCE(NULLIF(i.name_es, ''), i.name)"
+	}
+	rows, err := s.db.Query(`
+		SELECT sn.item_id, `+name+`, COALESCE(i.icon, ''), sn.min, sn.median, sn.quantity, sn.cheap_qty, sn.cheap_avg
+		FROM snapshots sn JOIN items i ON i.id = sn.item_id
+		WHERE sn.realm_id = ?1 AND sn.ts = (SELECT MAX(ts) FROM snapshots WHERE realm_id = ?1)
+		  AND sn.cheap_qty > 0 AND i.name <> ''
+		  AND sn.median * (100 - ?2) / 100.0 > sn.cheap_avg
+		ORDER BY (sn.median * (100 - ?2) / 100.0 - sn.cheap_avg) * sn.cheap_qty DESC, sn.item_id
+		LIMIT ?3`, houseID, cutPercent, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Opportunity
+	for rows.Next() {
+		var o Opportunity
+		if err := rows.Scan(&o.ItemID, &o.Name, &o.Icon, &o.Min, &o.Median, &o.Quantity, &o.TierUnits, &o.TierPrice); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
 	}
 	return out, rows.Err()
 }

@@ -85,10 +85,10 @@ Facts that shaped the design (found by probing and from Blizzard's docs):
 
 | Table | Key | Content |
 |---|---|---|
-| `snapshots` | (realm_id = house id, item_id, ts) | `min`, `median`, `avg`, `quantity` per item and moment; `ts` is Blizzard's publication time (unix seconds). Index on `ts`. |
+| `snapshots` | (realm_id = house id, item_id, ts) | `min`, `median`, `avg`, `quantity` per item and moment, plus the **cheap tier** (`cheap_qty`, `cheap_avg`: the units priced within 10% of the lowest and their average, NULL before tiers were stored); `ts` is Blizzard's publication time (unix seconds). Index on `ts`. |
 | `items` | id | `name`, `icon`, `vendor_sell`, `class_id`, `class_name`, `name_es`, `class_name_es`. NULL means not fetched yet (for `name_es`: named before Spanish existed, so `FillSpanishNames` backfills it); `icon` "" and `class_id` -1 mean fetched and absent. |
 | `item_kinds` | item_id | `commodity` 1/0, set from the document the item was listed in. |
-| `flows` | (house_id, item_id, ts) | `sold_low`, `sold_high`, `sales`, `listed`. Index on `ts`. |
+| `flows` | (house_id, item_id, ts) | `sold_low`, `sold_high`, `sales`, `listed`, and `sold_value_low` (copper the `sold_low` units were listed at; NULL before it was recorded). Index on `ts`. |
 
 - The column `realm_id` of `snapshots` holds the **house ID**; for historical reasons of the schema it keeps its name.
 - Prices are integers in copper. Retention deletes `snapshots` and `flows` older than the retention period.
@@ -137,6 +137,10 @@ a gap, then placeholders at 33,333,333,333, 99,999,990,499 and 99,999,999,999 co
   stack → both estimates and `Sales++`. New ID → `Listed += qty`. Returns nil without a baseline or if the gap is not
   positive or exceeds 12 h.
 
+- `Reduce` also returns the cheap tier (`CheapQty`, `CheapAvg`, rounded up so a plan never understates a cost): the
+  listings with `unit * 100 <= min * (100 + CheapTierPct)`. `Flows` also sums `SoldValueLow`: the listed value of the
+  units counted in `SoldLow` (a vanished listing's buyout; a bought-out part of a stack at its unit price).
+
 ### 5.3 `insights`: pure advice (FR-4.*, FR-5.4)
 
 - `Compute(points, cut)`: market value = median of the hourly medians; percentile = share of the window priced above
@@ -165,6 +169,7 @@ Every item endpoint takes `realm` = a **market (house) id**. Without it, the fir
 |---|---|
 | `GET /api/realms` | rulesets with only their houses that have data: `[{id, name, houses:[{id, faction}]}]` |
 | `GET /api/items?q=&realm=&category=&sort=&dir=&lang=` | up to 20 items by name; with only `category`, up to 50 most listed; 400 if neither. `sort=price` orders by the lowest buyout, highest first; `sort=sold-low` / `sort=sold-high` by the units sold (`flows.sold_low` / `sold_high`) in the last 7 days; highest first unless `dir=asc` (`dir=desc` is the default, anything else a 400); ties by name; any other `sort` is a 400. By price, items on sale in the latest snapshot always come before ones last seen earlier, in either direction. Every item carries `soldLow`/`soldHigh`, the sums of `flows` over that window. `lang=es` returns the Spanish name (English where there is none) and a typed name matches either language; `lang` other than `en`/`es` is a 400 |
+| `GET /api/plan?realm=&budget=&lang=` | the investment plan for `budget` copper (1 to 2147483647, else 400): `{budget, spent, unspent, revenue, profit, returnPct, cutPercent, picks:[{id,name,icon,units,buy,sell,net,cost,profit,returnPct,riskPct,daysToSell}]}`; `picks` is `[]` when nothing qualifies |
 | `GET /api/categories?realm=&lang=` | categories sold in the market, by name: `[{id, name, soldLow, soldHigh}]`, the units sold in each over the last 7 days; `lang=es` names them in Spanish (one entry per category even while only some items have a Spanish name) |
 | `GET /api/items/{id}/history?realm=&days=` | snapshots (default 7 days, capped at retention) |
 | `GET /api/items/{id}/insights?realm=` | insights, advice and the 7-day demand reading; 404 without prices |
@@ -172,6 +177,25 @@ Every item endpoint takes `realm` = a **market (house) id**. Without it, the fir
 | `GET /api/status?realm=` | `{updatedAt}`, the market's newest snapshot (null if none) |
 
 Lists are never `null` (empty array), unknown markets are 400, and errors are plain text.
+
+### 5.5b `invest`: the investment plan (FR-9.*)
+
+`store.InvestmentCandidates` prefilters in SQL: named items in the market's latest snapshot with a cheap tier whose
+`cheap_avg` is below the median net of the cut, best `(median x (1-cut) - cheap_avg) x cheap_qty` first, 200 of them.
+`/api/plan` then reads each one's history (market value = median of the hourly medians, as in the insights), demand
+(`ComputeDemand`) and `Store.SalePrice` (units-weighted `sold_value_low / sold_low` over 7 days, flows without a
+value left out) and calls the pure `invest.Make(budget, cut, candidates)`:
+
+- **Sell price** = `min(SalePrice, MarketValue)`; **net** = `floor(sell x (1 - cut))`; **return** = `(net - buy) / buy`.
+  Skipped: no tier, no sale price, fewer than `MinSoldUnits` (5) units seen leaving, fewer than `MinHistory` (6)
+  snapshots, fewer than `MinObservedHours` (3) of sales, or a return under `MinReturnPct` (5%).
+- **Break-even** = `ceil(buy / (1 - cut))`; **price risk** = `(below + 1) / (n + 2)` with `below` the hourly medians
+  under it (Laplace smoothing: 6 snapshots can never mean 0%); **time risk** = `min(1, days / 30)`, `days` =
+  `(listed/2 + units) / soldPerDayLow`; **risk** = `1 - (1 - price)(1 - time)`.
+- **Rank** by `return x (1 - price risk)`. **Units** = `min(tier, floor(soldPerDayLow x 2 - listed/2), 30% of the budget
+  / buy, remaining / buy)`, at least one when the budget covers it; at most ten picks.
+- The constants are product assumptions, in one place (`invest.go`), and the figures are estimates: the tier is a
+  summary of the price ladder, and half the stock is assumed to sit ahead of a new listing.
 
 ### 5.6 `notify` (FR-7.4–7.6)
 
@@ -213,6 +237,11 @@ never through a shell.
   reloads the results in place (the search key leaves the language out, so it does not reset the selection).
   `LanguageSwitch` is a labelled group of two `aria-pressed` buttons named in their own language (no flags); clicks
   on it do not count as outside clicks for the details panel.
+- **Investment planner:** `InvestmentPlanner` is a card under the front page's hero (`key={realm}` so it starts over
+  with the market). The gold is read as text (`toCopper`: a point or comma, 1 copper to 2^31-1), sent as copper; answers
+  to older questions are ignored (sequence counter) and the plan is asked again when the language changes. Risk is
+  written in words (`riskLow/Medium/High`) as well as a number, and the table scrolls sideways on a phone. Picking an
+  item calls `openItem`, which searches for its name and selects it.
 - **Home:** the title is an `<a href="/">` whose click handler clears query, category, sort, results and selection
   (`clearResults` also drops any search still in flight) and keeps the market.
 - **Details panel:** `closeDetails` refocuses the open `.result` button, then clears the selection (which also drops
