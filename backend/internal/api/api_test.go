@@ -112,10 +112,13 @@ func TestEachHouseIsItsOwnMarket(t *testing.T) {
 	}
 }
 
-func TestSearchRequiresAQuery(t *testing.T) {
+func TestSearchRequiresAQueryOrACategory(t *testing.T) {
 	h, _ := setup(t)
 	if rec := get(t, h, "/api/items"); rec.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", rec.Code)
+	}
+	if rec := get(t, h, "/api/items?realm=110"); rec.Code != http.StatusBadRequest {
+		t.Errorf("no query and no category: code = %d, want 400", rec.Code)
 	}
 }
 
@@ -465,5 +468,82 @@ func TestFlowEndpointReturnsAnEmptyListNotNullAndValidatesTheMarket(t *testing.T
 	}
 	if rec := get(t, h, "/api/items/7/flow?realm=999"); rec.Code != http.StatusBadRequest {
 		t.Errorf("unknown market: code = %d, want 400", rec.Code)
+	}
+}
+
+// --- item categories ---
+
+func categorisedMarket(t *testing.T) (http.Handler, *store.Store) {
+	t.Helper()
+	h, st := setup(t)
+	st.SaveItem(7, "Linen Cloth", "", 13)
+	st.SaveItem(8, "Linen Vest", "", 224)
+	st.SaveItem(9, "Silk Cloth", "", 80)
+	st.SaveItemClass(7, 7, "Trade Goods")
+	st.SaveItemClass(8, 4, "Armor")
+	st.SaveItemClass(9, 7, "Trade Goods")
+	save(t, st, 110, time.Now(), stat(7, 28, 500), stat(8, 300, 9), stat(9, 150, 800))
+	return h, st
+}
+
+func TestCategoriesListWhatTheMarketSells(t *testing.T) {
+	h, _ := categorisedMarket(t)
+	var got []store.Category
+	rec := get(t, h, "/api/categories?realm=110")
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body)
+	}
+	if len(got) != 2 || got[0] != (store.Category{ID: 4, Name: "Armor"}) || got[1] != (store.Category{ID: 7, Name: "Trade Goods"}) {
+		t.Errorf("categories = %+v", got)
+	}
+}
+
+func TestCategoriesAreAnEmptyListNotNullAndTheMarketIsValidated(t *testing.T) {
+	h, _ := setup(t)
+	if body := get(t, h, "/api/categories?realm=110").Body.String(); body != "[]\n" {
+		t.Errorf("body = %q, want []", body)
+	}
+	if rec := get(t, h, "/api/categories?realm=999"); rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown market: code = %d, want 400", rec.Code)
+	}
+}
+
+func TestACategoryNarrowsTheSearch(t *testing.T) {
+	h, _ := categorisedMarket(t)
+	var got []store.ItemSummary
+	json.Unmarshal(get(t, h, "/api/items?q=linen&realm=110&category=7").Body.Bytes(), &got)
+	if len(got) != 1 || got[0].Name != "Linen Cloth" {
+		t.Errorf("got %+v, want only the Trade Goods named linen", got)
+	}
+}
+
+func TestACategoryAloneBrowsesTheMostListedFirst(t *testing.T) {
+	h, _ := categorisedMarket(t)
+	var got []store.ItemSummary
+	rec := get(t, h, "/api/items?realm=110&category=7")
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil || len(got) != 2 {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body)
+	}
+	if got[0].Name != "Silk Cloth" || got[1].Name != "Linen Cloth" {
+		t.Errorf("order = %s, %s; want the most listed (silk, 800) first", got[0].Name, got[1].Name)
+	}
+}
+
+func TestACategoryThatIsNotANumberIsRejected(t *testing.T) {
+	h, _ := categorisedMarket(t)
+	if rec := get(t, h, "/api/items?realm=110&category=armor"); rec.Code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400", rec.Code)
+	}
+}
+
+func TestConsumablesAreCategoryZero(t *testing.T) {
+	h, st := setup(t)
+	st.SaveItem(5, "Bandage", "", 3)
+	st.SaveItemClass(5, 0, "Consumable")
+	save(t, st, 110, time.Now(), stat(5, 10, 100))
+	var got []store.ItemSummary
+	json.Unmarshal(get(t, h, "/api/items?realm=110&category=0").Body.Bytes(), &got)
+	if len(got) != 1 || got[0].Name != "Bandage" {
+		t.Errorf("got %+v, want the consumable (category 0)", got)
 	}
 }

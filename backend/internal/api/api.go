@@ -54,7 +54,7 @@ type server struct {
 	rules   Rules
 }
 
-// Handler serves /api/realms (houses with data only), /api/items?q=&realm=, /api/items/{id}/history?realm=&days=
+// Handler serves /api/realms (houses with data only), /api/items?q=&realm=&category=, /api/categories?realm=, /api/items/{id}/history?realm=&days=
 // and /api/items/{id}/insights?realm=. The first realm is the default; history
 // defaults to 7 days, insights to maxDays; both are capped at maxDays.
 func Handler(st *store.Store, realms []Realm, maxDays int, rules Rules) http.Handler {
@@ -62,6 +62,7 @@ func Handler(st *store.Store, realms []Realm, maxDays int, rules Rules) http.Han
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/realms", s.listRealms)
 	mux.HandleFunc("/api/items", s.searchItems)
+	mux.HandleFunc("/api/categories", s.listCategories)
 	mux.HandleFunc("/api/items/", s.item)
 	return mux
 }
@@ -108,17 +109,38 @@ func (s *server) rulesFor(market int) (cut, deposit float64) {
 	return s.rules.CutPercent, factionDepositRate
 }
 
+// Result limits: a name search is narrowed by what the user typed; a browse shows the most listed items.
+const (
+	searchLimit = 20
+	browseLimit = 50
+)
+
+// searchItems serves /api/items?q=&realm=&category=. It needs a query, a category, or both:
+// a category alone browses what is on sale in that category.
 func (s *server) searchItems(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" {
-		http.Error(w, "q is required", http.StatusBadRequest)
+	var class *int
+	if v := r.URL.Query().Get("category"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "invalid category", http.StatusBadRequest)
+			return
+		}
+		class = &n
+	}
+	if q == "" && class == nil {
+		http.Error(w, "q or category is required", http.StatusBadRequest)
 		return
 	}
 	realm, ok := s.realmParam(w, r)
 	if !ok {
 		return
 	}
-	items, err := s.st.SearchItems(realm, q, 20)
+	limit := searchLimit
+	if q == "" {
+		limit = browseLimit
+	}
+	items, err := s.st.SearchItems(realm, store.ItemQuery{Query: q, Class: class, Limit: limit})
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -127,6 +149,23 @@ func (s *server) searchItems(w http.ResponseWriter, r *http.Request) {
 		items = []store.ItemSummary{}
 	}
 	writeJSON(w, items)
+}
+
+// listCategories serves /api/categories?realm=: the item categories on sale in a market.
+func (s *server) listCategories(w http.ResponseWriter, r *http.Request) {
+	realm, ok := s.realmParam(w, r)
+	if !ok {
+		return
+	}
+	cats, err := s.st.Categories(realm)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if cats == nil {
+		cats = []store.Category{}
+	}
+	writeJSON(w, cats)
 }
 
 // item routes /api/items/{id}/history and /api/items/{id}/insights.
