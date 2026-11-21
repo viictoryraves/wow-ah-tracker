@@ -96,7 +96,7 @@ func TestSearchItemsByNameCaseInsensitiveWithLatestPrice(t *testing.T) {
 	must(t, s.SaveSnapshot(4440, t0, []poller.ItemStats{stat(7, 100, 110, 120, 5)}))
 	must(t, s.SaveSnapshot(4440, t0.Add(time.Hour), []poller.ItemStats{stat(7, 90, 95, 99, 8)}))
 
-	res, err := s.SearchItems(4440, "linen", 10)
+	res, err := s.SearchItems(4440, ItemQuery{Query: "linen", Limit: 10})
 	must(t, err)
 	if len(res) != 1 || res[0].ID != 7 || res[0].Name != "Linen Cloth" {
 		t.Fatalf("unexpected results %+v", res)
@@ -112,6 +112,7 @@ func TestSearchItemsByNameCaseInsensitiveWithLatestPrice(t *testing.T) {
 func TestItemsWithoutNameAreReportedAsMissing(t *testing.T) {
 	s := newStore(t)
 	must(t, s.SaveItem(7, "Linen Cloth", "https://icons/linen.jpg", 0))
+	must(t, s.SaveItemClass(7, 7, "Trade Goods")) // a complete item: name, icon, vendor price and category
 	must(t, s.SaveSnapshot(4440, t0, []poller.ItemStats{stat(7, 1, 1, 1, 1), stat(9, 1, 1, 1, 1), stat(10, 1, 1, 1, 1)}))
 
 	ids, err := s.ItemsMissingName(10)
@@ -126,6 +127,8 @@ func TestItemsWithANameButUnknownIconAreBackfilled(t *testing.T) {
 	must(t, s.SaveSnapshot(4440, t0, []poller.ItemStats{stat(7, 1, 1, 1, 1), stat(8, 1, 1, 1, 1)}))
 	must(t, s.SaveItem(7, "Linen Cloth", "https://icons/linen.jpg", 0)) // complete
 	must(t, s.SaveItem(8, "Light Leather", "", 0))                      // fetched, genuinely has no icon
+	must(t, s.SaveItemClass(7, 7, "Trade Goods"))
+	must(t, s.SaveItemClass(8, 7, "Trade Goods"))
 
 	ids, err := s.ItemsMissingName(10)
 	must(t, err)
@@ -158,7 +161,7 @@ func TestOpeningAnOlderDatabaseAddsTheIconColumnAndBackfillsOldItems(t *testing.
 		t.Fatalf("the old, icon-less item should be queued for backfill, got %v", ids)
 	}
 	// and the old data is still there
-	res, err := s.SearchItems(4440, "linen", 10)
+	res, err := s.SearchItems(4440, ItemQuery{Query: "linen", Limit: 10})
 	must(t, err)
 	if len(res) != 1 || res[0].Icon != "" {
 		t.Fatalf("unexpected %+v", res)
@@ -239,6 +242,7 @@ func TestOpeningADatabaseWithoutVendorPricesQueuesItsItemsForBackfill(t *testing
 		t.Fatalf("the item with an icon but no vendor price should be queued, got %v", ids)
 	}
 	must(t, s.SaveItem(7, "Linen Cloth", "https://icons/linen.jpg", 13))
+	must(t, s.SaveItemClass(7, 7, "Trade Goods"))
 	if ids, _ := s.ItemsMissingName(10); len(ids) != 0 {
 		t.Errorf("a complete item must not be queued again, got %v", ids)
 	}
@@ -296,6 +300,161 @@ func TestRetentionAlsoRemovesOldFlows(t *testing.T) {
 	pts, _ := s.FlowHistory(110, 7, time.Time{})
 	if len(pts) != 1 || pts[0].SoldLow != 2 {
 		t.Fatalf("points = %+v, want only the recent flow", pts)
+	}
+}
+
+func intp(n int) *int { return &n }
+
+// categorised stores items 7 (Trade Goods, 7), 8 (Armor, 4) and 9 (Consumable, 0) with prices on house 110.
+func categorised(t *testing.T) *Store {
+	t.Helper()
+	s := newStore(t)
+	must(t, s.SaveItem(7, "Linen Cloth", "", 13))
+	must(t, s.SaveItem(8, "Linen Vest", "", 224))
+	must(t, s.SaveItem(9, "Linen Bandage", "", 3))
+	must(t, s.SaveItemClass(7, 7, "Trade Goods"))
+	must(t, s.SaveItemClass(8, 4, "Armor"))
+	must(t, s.SaveItemClass(9, 0, "Consumable"))
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{stat(7, 28, 30, 30, 500), stat(8, 300, 315, 315, 9), stat(9, 5, 6, 6, 120)}))
+	return s
+}
+
+func names(res []ItemSummary) []string {
+	var out []string
+	for _, r := range res {
+		out = append(out, r.Name)
+	}
+	return out
+}
+
+func TestSearchCanBeLimitedToACategory(t *testing.T) {
+	s := categorised(t)
+	res, err := s.SearchItems(110, ItemQuery{Query: "linen", Class: intp(7), Limit: 10})
+	must(t, err)
+	if got := names(res); len(got) != 1 || got[0] != "Linen Cloth" {
+		t.Fatalf("got %v, want only the Trade Goods item", got)
+	}
+}
+
+func TestTheConsumableCategoryHasIDZeroAndStillWorks(t *testing.T) {
+	s := categorised(t)
+	res, err := s.SearchItems(110, ItemQuery{Query: "linen", Class: intp(0), Limit: 10})
+	must(t, err)
+	if got := names(res); len(got) != 1 || got[0] != "Linen Bandage" {
+		t.Fatalf("got %v, want the Consumable (class 0) item", got)
+	}
+}
+
+func TestBrowsingACategoryWithoutAQueryListsWhatIsMostOnSaleFirst(t *testing.T) {
+	s := categorised(t)
+	must(t, s.SaveItem(10, "Silk Cloth", "", 80))
+	must(t, s.SaveItemClass(10, 7, "Trade Goods"))
+	must(t, s.SaveSnapshot(110, t0.Add(time.Hour), []poller.ItemStats{stat(7, 28, 30, 30, 500), stat(10, 150, 160, 160, 800)}))
+
+	res, err := s.SearchItems(110, ItemQuery{Class: intp(7), Limit: 10})
+	must(t, err)
+	if got := names(res); len(got) != 2 || got[0] != "Silk Cloth" || got[1] != "Linen Cloth" {
+		t.Fatalf("got %v, want the most listed first", got)
+	}
+}
+
+func TestBrowsingOnlyShowsWhatIsListedNowButSearchingByNameFindsOlderItems(t *testing.T) {
+	s := categorised(t)
+	// the next snapshot no longer lists the vest (id 8)
+	must(t, s.SaveSnapshot(110, t0.Add(time.Hour), []poller.ItemStats{stat(7, 28, 30, 30, 500)}))
+	browse, _ := s.SearchItems(110, ItemQuery{Class: intp(4), Limit: 10})
+	if len(browse) != 0 {
+		t.Errorf("browse = %v, want nothing: the vest is not on sale any more", names(browse))
+	}
+	byName, _ := s.SearchItems(110, ItemQuery{Query: "vest", Limit: 10})
+	if len(byName) != 1 {
+		t.Errorf("by name = %v, want the vest with its last known price", names(byName))
+	}
+}
+
+func TestCategoriesListWhatTheMarketHasSortedByName(t *testing.T) {
+	s := categorised(t)
+	must(t, s.SaveItem(11, "Mystery", "", 0)) // category never fetched
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{stat(11, 1, 1, 1, 1)}))
+	must(t, s.SaveItem(12, "Odd", "", 0))
+	must(t, s.SaveItemClass(12, -1, "")) // fetched, the item has no category
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{stat(12, 1, 1, 1, 1)}))
+	must(t, s.SaveItem(13, "Elsewhere", "", 0))
+	must(t, s.SaveItemClass(13, 15, "Miscellaneous"))
+	must(t, s.SaveSnapshot(113, t0, []poller.ItemStats{stat(13, 1, 1, 1, 1)})) // another house
+
+	cats, err := s.Categories(110)
+	must(t, err)
+	var got []string
+	for _, c := range cats {
+		got = append(got, c.Name)
+	}
+	want := []string{"Armor", "Consumable", "Trade Goods"}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("categories = %v, want %v", got, want)
+	}
+	if cats[1].ID != 0 {
+		t.Errorf("Consumable id = %d, want 0", cats[1].ID)
+	}
+}
+
+func TestItemsWithoutACategoryAreQueuedForBackfill(t *testing.T) {
+	s := newStore(t)
+	must(t, s.SaveItem(7, "Linen Cloth", "https://icons/linen.jpg", 13)) // icon and vendor price known
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{stat(7, 1, 1, 1, 1)}))
+	ids, _ := s.ItemsMissingName(10)
+	if len(ids) != 1 {
+		t.Fatalf("queued = %v, want the item without a category", ids)
+	}
+	must(t, s.SaveItemClass(7, 7, "Trade Goods"))
+	if ids, _ := s.ItemsMissingName(10); len(ids) != 0 {
+		t.Errorf("queued = %v, want none once the category is known", ids)
+	}
+}
+
+func TestOpeningADatabaseWithoutCategoriesAddsTheColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nocat.db")
+	old, err := sql.Open("sqlite", path)
+	must(t, err)
+	_, err = old.Exec(`CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, icon TEXT, vendor_sell INTEGER);
+		CREATE TABLE snapshots (realm_id INTEGER NOT NULL, item_id INTEGER NOT NULL, ts INTEGER NOT NULL,
+			min INTEGER NOT NULL, median INTEGER NOT NULL, avg INTEGER NOT NULL, quantity INTEGER NOT NULL,
+			PRIMARY KEY (realm_id, item_id, ts));
+		INSERT INTO items VALUES (7, 'Linen Cloth', 'https://icons/linen.jpg', 13);
+		INSERT INTO snapshots VALUES (110, 7, 1000, 5, 5, 5, 1);`)
+	must(t, err)
+	old.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("opening an older database failed: %v", err)
+	}
+	defer s.Close()
+	ids, _ := s.ItemsMissingName(10)
+	if len(ids) != 1 || ids[0] != 7 {
+		t.Fatalf("queued = %v, want the existing item queued for its category", ids)
+	}
+}
+
+func TestHasSnapshotTellsWhetherAHouseAlreadyHasThatMoment(t *testing.T) {
+	s := newStore(t)
+	has := func(house int, at time.Time) bool {
+		ok, err := s.HasSnapshot(house, at)
+		must(t, err)
+		return ok
+	}
+	if has(110, t0) {
+		t.Fatal("an empty database has no snapshots")
+	}
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{stat(7, 1, 1, 1, 1)}))
+	if !has(110, t0) {
+		t.Error("the saved snapshot should be found")
+	}
+	if has(110, t0.Add(time.Hour)) {
+		t.Error("another moment of the same house is not stored")
+	}
+	if has(113, t0) {
+		t.Error("another house at the same moment is not stored")
 	}
 }
 

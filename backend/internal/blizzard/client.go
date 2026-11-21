@@ -221,7 +221,14 @@ type ItemInfo struct {
 	// VendorSell is what a vendor pays for one, in copper (0 when they do not buy it).
 	// It is the floor for the price worth asking at the auction house.
 	VendorSell int64
+	// ClassID and ClassName are the item's category (Armor, Trade Goods, ...), or
+	// NoClass and "" when the item has none.
+	ClassID   int
+	ClassName string
 }
+
+// NoClass marks an item whose category was fetched but is absent.
+const NoClass = -1
 
 // ItemInfo fetches an item's name and icon from the static namespace. A
 // missing icon (404) is not an error; any other icon failure is, so the caller
@@ -230,11 +237,18 @@ func (c *Client) ItemInfo(ctx context.Context, staticNamespace string, id int) (
 	var item struct {
 		Name      string `json:"name"`
 		SellPrice int64  `json:"sell_price"`
+		ItemClass *struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"item_class"`
 	}
 	if _, err := c.GetJSON(ctx, fmt.Sprintf("/data/wow/item/%d", id), staticNamespace, time.Time{}, &item); err != nil {
 		return ItemInfo{}, err
 	}
-	info := ItemInfo{Name: item.Name, VendorSell: item.SellPrice}
+	info := ItemInfo{Name: item.Name, VendorSell: item.SellPrice, ClassID: NoClass}
+	if item.ItemClass != nil {
+		info.ClassID, info.ClassName = item.ItemClass.ID, item.ItemClass.Name
+	}
 
 	var media struct {
 		Assets []struct {

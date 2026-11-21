@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS items (
 	id   INTEGER PRIMARY KEY,
 	name TEXT NOT NULL,
 	icon TEXT, -- NULL = not fetched yet, '' = fetched, the item has no icon
-	vendor_sell INTEGER -- what a vendor pays for one, in copper; NULL = not fetched yet, 0 = they do not buy it
+	vendor_sell INTEGER, -- what a vendor pays for one, in copper; NULL = not fetched yet, 0 = they do not buy it
+	class_id INTEGER, -- the item's category (Armor, Trade Goods...); NULL = not fetched yet, -1 = it has none
+	class_name TEXT
 );
 CREATE TABLE IF NOT EXISTS flows (
 	house_id  INTEGER NOT NULL,
@@ -60,7 +62,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	for _, col := range [][2]string{{"icon", "TEXT"}, {"vendor_sell", "INTEGER"}} {
+	for _, col := range [][2]string{{"icon", "TEXT"}, {"vendor_sell", "INTEGER"}, {"class_id", "INTEGER"}, {"class_name", "TEXT"}} {
 		if err := addColumn(db, "items", col[0], col[1]); err != nil {
 			db.Close()
 			return nil, err
@@ -114,6 +116,16 @@ func (s *Store) SaveSnapshot(realmID int, ts time.Time, stats []poller.ItemStats
 		}
 	}
 	return tx.Commit()
+}
+
+// HasSnapshot reports whether the house already has a snapshot stored for that moment.
+func (s *Store) HasSnapshot(houseID int, ts time.Time) (bool, error) {
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM snapshots WHERE realm_id = ? AND ts = ? LIMIT 1`, houseID, ts.Unix()).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 type Point struct {
@@ -283,10 +295,10 @@ func (s *Store) ItemFacts(id int) (ItemFacts, error) {
 }
 
 // ItemsMissingName lists up to limit item IDs that have prices but no complete
-// item record yet (no name, or an icon or vendor price that was never fetched).
+// item record yet (no name, or an icon, vendor price or category that was never fetched).
 func (s *Store) ItemsMissingName(limit int) ([]int, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT item_id FROM snapshots
-		WHERE item_id NOT IN (SELECT id FROM items WHERE icon IS NOT NULL AND vendor_sell IS NOT NULL) LIMIT ?`, limit)
+		WHERE item_id NOT IN (SELECT id FROM items WHERE icon IS NOT NULL AND vendor_sell IS NOT NULL AND class_id IS NOT NULL) LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -311,16 +323,43 @@ type ItemSummary struct {
 	Quantity int    `json:"quantity"`
 }
 
-// SearchItems finds named items matching a substring (case-insensitive) that
-// have prices on the realm, each with its latest price.
-func (s *Store) SearchItems(realmID int, query string, limit int) ([]ItemSummary, error) {
+// SaveItemClass records an item's category; classID -1 means the item has none.
+func (s *Store) SaveItemClass(id, classID int, name string) error {
+	_, err := s.db.Exec(`UPDATE items SET class_id = ?, class_name = ? WHERE id = ?`, classID, name, id)
+	return err
+}
+
+// ItemQuery says which items to list. With a Query, items whose name contains it
+// (case-insensitive) in name order; without one, a browse of what is on sale now,
+// the most listed first. Class limits the result to one category (id 0 is valid).
+type ItemQuery struct {
+	Query string
+	Class *int
+	Limit int
+}
+
+// SearchItems lists items that have prices in a market, each with its latest price.
+func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
+	class := -2 // matches no item: -1 is the "no category" marker
+	anyClass := 1
+	if q.Class != nil {
+		class, anyClass = *q.Class, 0
+	}
+	browsing := 0
+	order := "i.name"
+	if q.Query == "" {
+		browsing, order = 1, "sn.quantity DESC, i.name"
+	}
 	rows, err := s.db.Query(`
 		SELECT i.id, i.name, COALESCE(i.icon, ''), sn.min, sn.median, sn.quantity
 		FROM items i
 		JOIN snapshots sn ON sn.item_id = i.id AND sn.realm_id = ?1
 		WHERE i.name LIKE '%' || ?2 || '%'
-		  AND sn.ts = (SELECT MAX(ts) FROM snapshots WHERE realm_id = ?1 AND item_id = i.id)
-		ORDER BY i.name LIMIT ?3`, realmID, query, limit)
+		  AND (?4 = 1 OR i.class_id = ?5)
+		  AND sn.ts = CASE WHEN ?6 = 1
+		        THEN (SELECT MAX(ts) FROM snapshots WHERE realm_id = ?1)
+		        ELSE (SELECT MAX(ts) FROM snapshots WHERE realm_id = ?1 AND item_id = i.id) END
+		ORDER BY `+order+` LIMIT ?3`, realmID, q.Query, q.Limit, anyClass, class, browsing)
 	if err != nil {
 		return nil, err
 	}
@@ -332,6 +371,35 @@ func (s *Store) SearchItems(realmID int, query string, limit int) ([]ItemSummary
 			return nil, err
 		}
 		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// Category is an item category (Armor, Trade Goods, ...).
+type Category struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// Categories lists the categories of the items that have prices in a market, by name.
+// Items whose category is not known yet are left out.
+func (s *Store) Categories(realmID int) ([]Category, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT i.class_id, i.class_name
+		FROM items i JOIN snapshots sn ON sn.item_id = i.id AND sn.realm_id = ?
+		WHERE i.class_id >= 0 AND i.class_name <> ''
+		ORDER BY i.class_name`, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Category
+	for rows.Next() {
+		var c Category
+		if err := rows.Scan(&c.ID, &c.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }

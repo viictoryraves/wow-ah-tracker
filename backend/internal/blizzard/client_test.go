@@ -69,7 +69,7 @@ func TestItemInfoCombinesNameAndIconFromTheStaticNamespace(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/data/wow/item/7":
-			w.Write([]byte(`{"id":7,"name":"Linen Cloth","sell_price":13,"purchase_price":55}`))
+			w.Write([]byte(`{"id":7,"name":"Linen Cloth","sell_price":13,"purchase_price":55,"item_class":{"id":7,"name":"Trade Goods"},"item_subclass":{"id":5,"name":"Cloth"}}`))
 		case "/data/wow/media/item/7":
 			w.Write([]byte(`{"assets":[{"key":"icon","value":"https://render.example/icons/56/linen.jpg"}]}`))
 		default:
@@ -85,6 +85,9 @@ func TestItemInfoCombinesNameAndIconFromTheStaticNamespace(t *testing.T) {
 	}
 	if info.VendorSell != 13 {
 		t.Errorf("vendor sell = %d, want 13 (what a vendor pays for one)", info.VendorSell)
+	}
+	if info.ClassID != 7 || info.ClassName != "Trade Goods" {
+		t.Errorf("category = %d %q, want 7 Trade Goods", info.ClassID, info.ClassName)
 	}
 }
 
@@ -220,5 +223,19 @@ func TestItemInfoWithoutAVendorPriceHasZero(t *testing.T) {
 	info, err := c.ItemInfo(context.Background(), "static-forever-eu", 7)
 	if err != nil || info.VendorSell != 0 {
 		t.Fatalf("info = %+v err = %v", info, err)
+	}
+}
+
+func TestItemInfoWithoutACategoryIsMarkedAsHavingNone(t *testing.T) {
+	c := fakeBlizzard(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/data/wow/media/item/7" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"id":7,"name":"Odd Thing"}`))
+	})
+	info, err := c.ItemInfo(context.Background(), "static-forever-eu", 7)
+	if err != nil || info.ClassID != NoClass || info.ClassName != "" {
+		t.Fatalf("info = %+v err = %v, want the no-class marker", info, err)
 	}
 }
