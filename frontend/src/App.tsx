@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchHistory, fetchInsights, fetchRealms, searchItems } from './api'
-import type { Insights, ItemSummary, Point, Realm } from './api'
+import { fetchCategories, fetchHistory, fetchInsights, fetchRealms, searchItems } from './api'
+import type { Category, Insights, ItemSummary, Point, Realm } from './api'
 import { formatMoney } from './format'
 import { InsightsPanel } from './InsightsPanel'
 import { PriceChart } from './PriceChart'
@@ -15,6 +15,7 @@ const RANGES: [number, string][] = [
 ]
 const SEARCH_DELAY_MS = 300
 const MIN_QUERY_LENGTH = 2
+const ALL_CATEGORIES = 'all'
 
 export function App() {
   // The address carries realm, search and item so a view can be shared or reloaded.
@@ -25,6 +26,11 @@ export function App() {
   const [query, setQuery] = useState(initial.get('q') ?? '')
   const [results, setResults] = useState<ItemSummary[]>()
   const [searching, setSearching] = useState(false)
+  const [categories, setCategories] = useState<Category[]>([])
+  const [category, setCategory] = useState<number | undefined>(() => {
+    const wanted = initial.get('category')
+    return wanted !== null && wanted !== '' && !Number.isNaN(Number(wanted)) ? Number(wanted) : undefined
+  })
   const [selected, setSelected] = useState<ItemSummary>()
   const [days, setDays] = useState(1)
   const [history, setHistory] = useState<{ key: string; points: Point[] }>()
@@ -46,6 +52,22 @@ export function App() {
       })
       .catch(() => setError(true))
   }, [initial])
+
+  // The categories on sale in the current market. A category this market does not sell is dropped.
+  useEffect(() => {
+    if (realm === undefined) return
+    let stale = false
+    fetchCategories(realm)
+      .then((list) => {
+        if (stale) return
+        setCategories(list)
+        setCategory((c) => (c !== undefined && !list.some((x) => x.id === c) ? undefined : c))
+      })
+      .catch(() => !stale && setCategories([])) // categories are optional: search still works
+    return () => {
+      stale = true
+    }
+  }, [realm])
 
   useEffect(() => {
     if (!selected || realm === undefined) return
@@ -93,15 +115,15 @@ export function App() {
   const currentHouses = currentRealm?.houses ?? []
 
   // Answers to older searches are ignored, so a slow one cannot overwrite a newer one.
-  const runSearch = useCallback((q: string, realmId: number) => {
-    lastSearch.current = `${realmId}|${q}`
+  const runSearch = useCallback((q: string, realmId: number, categoryId?: number) => {
+    lastSearch.current = `${realmId}|${q}|${categoryId ?? ''}`
     const seq = ++searchSeq.current
     const current = () => seq === searchSeq.current
     setError(false)
     setSelected(undefined)
     setResults(undefined)
     setSearching(true)
-    searchItems(q, realmId)
+    searchItems(q, realmId, categoryId)
       .then((found) => {
         if (!current()) return
         setResults(found)
@@ -113,29 +135,47 @@ export function App() {
       .finally(() => current() && setSearching(false))
   }, [])
 
-  // Search as the user types, once they pause.
+  // A name needs a couple of letters; a category alone browses what is on sale in it.
+  const typed = query.trim()
+  const searchText = typed.length >= MIN_QUERY_LENGTH ? typed : ''
+  const canSearch = searchText !== '' || category !== undefined
+
+  // Search as the user types (or browse once a category is chosen), when they pause.
   useEffect(() => {
-    const q = query.trim()
-    if (q.length < MIN_QUERY_LENGTH || realm === undefined || lastSearch.current === `${realm}|${q}`) return
-    const key = `${realm}|${q}`
+    if (!canSearch || realm === undefined) return
+    const key = `${realm}|${searchText}|${category ?? ''}`
+    if (lastSearch.current === key) return
     const timer = setTimeout(() => {
-      if (lastSearch.current !== key) runSearch(q, realm) // the Search button may have run it meanwhile
+      if (lastSearch.current !== key) runSearch(searchText, realm, category) // the Search button may have run it meanwhile
     }, SEARCH_DELAY_MS)
     return () => clearTimeout(timer)
-  }, [query, realm, runSearch])
+  }, [canSearch, searchText, category, realm, runSearch])
 
   useEffect(() => {
     if (realm === undefined) return
     const params = new URLSearchParams({ realm: String(realm) })
-    if (query.trim()) params.set('q', query.trim())
+    if (typed) params.set('q', typed)
+    if (category !== undefined) params.set('category', String(category))
     if (selected) params.set('item', String(selected.id))
     window.history.replaceState(null, '', `?${params}`)
-  }, [realm, query, selected])
+  }, [realm, typed, category, selected])
+
+  const changeCategory = (value: string) => {
+    const next = value === ALL_CATEGORIES ? undefined : Number(value)
+    setCategory(next)
+    if (next === undefined && searchText === '') {
+      // nothing left to search or browse: back to the guidance
+      searchSeq.current++
+      lastSearch.current = ''
+      setSearching(false)
+      setResults(undefined)
+      setSelected(undefined)
+    }
+  }
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    const q = query.trim()
-    if (q && realm !== undefined) runSearch(q, realm)
+    if ((typed || category !== undefined) && realm !== undefined) runSearch(typed, realm, category)
   }
 
   return (
@@ -177,6 +217,19 @@ export function App() {
               </select>
             </label>
           )}
+          {categories.length > 0 && (
+            <label className="field">
+              <span>Category</span>
+              <select value={category ?? ALL_CATEGORIES} onChange={(e) => changeCategory(e.target.value)}>
+                <option value={ALL_CATEGORIES}>All categories</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="field grow">
             <span>Search items</span>
             <input
@@ -207,10 +260,17 @@ export function App() {
               </p>
             )}
             {!(realmsLoaded && realms.length === 0) && !results && !searching && !error && (
-              <p className="muted hint">Search for an item to see its price history, e.g. “linen cloth”.</p>
+              <p className="muted hint">
+                Search for an item to see its price history, e.g. “linen cloth”, or pick a category to browse.
+              </p>
             )}
             {searching && <p className="muted hint">Searching…</p>}
             {results && results.length === 0 && <p className="muted hint">No items found. Try another name.</p>}
+            {results && results.length > 0 && searchText === '' && category !== undefined && (
+              <p className="muted small">
+                Most listed in {categories.find((c) => c.id === category)?.name ?? 'this category'}
+              </p>
+            )}
             {results && results.length > 0 && (
               <ul className="results">
                 {results.map((item) => (

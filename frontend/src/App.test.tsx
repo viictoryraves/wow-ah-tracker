@@ -23,6 +23,12 @@ const normal = {
 }
 const realms = [pvp, normal]
 
+const categories = [
+  { id: 4, name: 'Armor' },
+  { id: 0, name: 'Consumable' },
+  { id: 7, name: 'Trade Goods' },
+]
+
 const linen = { id: 7, name: 'Linen Cloth', icon: 'https://icons/linen.jpg', min: 12345, median: 15000, quantity: 80 }
 const insights = {
   min: 12345, marketValue: 20000, vsMarketPct: -38.3, cheaperThanPct: 90, change1dPct: -2, change7dPct: 5,
@@ -43,6 +49,7 @@ function mockApi(routes: Routes = {}) {
   const calls: string[] = []
   const table: Routes = {
     '/api/realms': realms,
+    '/api/categories?realm=110': categories,
     '/api/items?q=linen&realm=110': [linen],
     '/api/items/7/history?realm=110&days=1': history,
     '/api/items/7/insights?realm=110': insights,
@@ -425,5 +432,122 @@ describe('attribution', () => {
     expect(screen.getByText(/data provided by blizzard entertainment/i)).toBeInTheDocument()
     expect(screen.getByText(/not affiliated with or endorsed by blizzard/i)).toBeInTheDocument()
     await screen.findByLabelText(/^faction$/i)
+  })
+})
+
+describe('item categories', () => {
+  const categorySelect = () => screen.getByLabelText(/^category$/i)
+  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800 }
+  const vest = { id: 8, name: 'Linen Vest', icon: '', min: 300, median: 315, quantity: 9 }
+
+  async function renderCategories(routes: Routes = {}) {
+    const { user, calls } = await renderApp({
+      '/api/items?realm=110&category=7': [silk, linen],
+      '/api/items?q=linen&realm=110&category=7': [linen],
+      '/api/items?realm=110&category=4': [vest],
+      '/api/items?realm=110&category=0': [{ ...linen, id: 5, name: 'Bandage' }],
+      ...routes,
+    })
+    await screen.findByLabelText(/^category$/i)
+    return { user, calls }
+  }
+
+  it('offers every category the market sells, by name', async () => {
+    await renderCategories()
+    expect(optionNames(categorySelect())).toEqual(['All categories', 'Armor', 'Consumable', 'Trade Goods'])
+    expect(categorySelect()).toHaveValue('all')
+  })
+
+  it('hides the picker when the market has no categories yet', async () => {
+    const { calls } = await renderApp({ '/api/categories?realm=110': [] })
+    await waitFor(() => expect(calls).toContain('/api/categories?realm=110'))
+    expect(screen.queryByLabelText(/^category$/i)).not.toBeInTheDocument()
+  })
+
+  it('does not show an error when the categories cannot be loaded; the search still works', async () => {
+    const { user } = await renderApp({ '/api/categories?realm=110': () => new Response('boom', { status: 500 }) })
+    await search(user)
+    expect(await screen.findByRole('button', { name: /linen cloth/i })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^category$/i)).not.toBeInTheDocument()
+  })
+
+  it('browses a category without typing anything, the most listed first', async () => {
+    const { user, calls } = await renderCategories()
+    await user.selectOptions(categorySelect(), '7')
+    const results = await screen.findAllByRole('button', { name: /cloth/i })
+    expect(results.map((r) => r.querySelector('.name')?.textContent)).toEqual(['Silk Cloth', 'Linen Cloth'])
+    expect(calls).toContain('/api/items?realm=110&category=7')
+    expect(screen.getByText(/most listed in trade goods/i)).toBeInTheDocument()
+  })
+
+  it('searches within the category when something is typed', async () => {
+    const { user, calls } = await renderCategories()
+    await user.type(screen.getByLabelText(/search items/i), 'linen')
+    await screen.findByRole('button', { name: /linen cloth/i })
+    await user.selectOptions(categorySelect(), '7')
+    await waitFor(() => expect(calls).toContain('/api/items?q=linen&realm=110&category=7'))
+    expect(await screen.findByRole('button', { name: /linen cloth/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /silk cloth/i })).not.toBeInTheDocument()
+  })
+
+  it('treats consumables (category 0) like any other category', async () => {
+    const { user } = await renderCategories()
+    await user.selectOptions(categorySelect(), '0')
+    expect(await screen.findByRole('button', { name: /bandage/i })).toBeInTheDocument()
+  })
+
+  it('goes back to the guidance when All categories is chosen and nothing is typed', async () => {
+    const { user } = await renderCategories()
+    await user.selectOptions(categorySelect(), '7')
+    await screen.findAllByRole('button', { name: /cloth/i })
+    await user.selectOptions(categorySelect(), 'all')
+    expect(await screen.findByText(/search for an item/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /silk cloth/i })).not.toBeInTheDocument()
+  })
+
+  it('keeps browsing the same category on the new house when the faction changes', async () => {
+    const { user, calls } = await renderCategories({
+      '/api/categories?realm=113': categories,
+      '/api/items?realm=113&category=7': [{ ...silk, min: 999 }],
+    })
+    await user.selectOptions(categorySelect(), '7')
+    await screen.findAllByRole('button', { name: /cloth/i })
+    await user.selectOptions(factionSelect(), '113')
+    await waitFor(() => expect(calls).toContain('/api/items?realm=113&category=7'))
+    expect(await screen.findByRole('button', { name: /silk cloth/i })).toHaveTextContent('9s 99c')
+    expect(categorySelect()).toHaveValue('7')
+  })
+
+  it('drops the category when the new house does not sell it', async () => {
+    const { user } = await renderCategories({ '/api/categories?realm=113': [{ id: 4, name: 'Armor' }] })
+    await user.selectOptions(categorySelect(), '7')
+    await screen.findAllByRole('button', { name: /cloth/i })
+    await user.selectOptions(factionSelect(), '113')
+    await waitFor(() => expect(optionNames(categorySelect())).toEqual(['All categories', 'Armor']))
+    expect(categorySelect()).toHaveValue('all')
+  })
+
+  it('keeps the category in the address and restores it from there', async () => {
+    const { user } = await renderCategories()
+    await user.selectOptions(categorySelect(), '4')
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get('category')).toBe('4'))
+  })
+
+  it('restores a browsed category from the address', async () => {
+    window.history.replaceState(null, '', '/?realm=110&category=7')
+    mockApi({ '/api/items?realm=110&category=7': [silk, linen] })
+    render(<App />)
+    expect(await screen.findByRole('button', { name: /silk cloth/i })).toBeInTheDocument()
+    await waitFor(() => expect(categorySelect()).toHaveValue('7'))
+  })
+
+  it('refreshes the browse exactly once when Search is pressed with only a category chosen', async () => {
+    const { user, calls } = await renderCategories()
+    await user.selectOptions(categorySelect(), '7')
+    await screen.findAllByRole('button', { name: /cloth/i })
+    await user.click(screen.getByRole('button', { name: /^search$/i }))
+    await sleep(500) // long enough for a stray delayed search to show up
+    expect(calls.filter((c) => c === '/api/items?realm=110&category=7')).toHaveLength(2) // the selection, then the press
   })
 })

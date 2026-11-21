@@ -36,8 +36,23 @@ async function getJSON<T>(url: string): Promise<T> {
 
 export const fetchRealms = () => getJSON<Realm[]>('/api/realms')
 
-export const searchItems = (q: string, realm: number) =>
-  getJSON<ItemSummary[]>(`/api/items?q=${encodeURIComponent(q)}&realm=${realm}`)
+/** An item category (Armor, Trade Goods, ...). */
+export interface Category {
+  id: number // 0 is a real category (Consumable)
+  name: string
+}
+
+export const fetchCategories = (realm: number) => getJSON<Category[]>(`/api/categories?realm=${realm}`)
+
+/** By name, within a category, or both. Only a category browses what is on sale, the most listed first. */
+export const searchItems = (q: string, realm: number, category?: number) => {
+  const params = [
+    q ? `q=${encodeURIComponent(q)}` : '',
+    `realm=${realm}`,
+    category !== undefined ? `category=${category}` : '',
+  ]
+  return getJSON<ItemSummary[]>(`/api/items?${params.filter(Boolean).join('&')}`)
+}
 
 export const fetchHistory = (itemId: number, realm: number, days: number) =>
   getJSON<Point[]>(`/api/items/${itemId}/history?realm=${realm}&days=${days}`)
