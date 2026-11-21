@@ -266,7 +266,7 @@ describe('InsightsPanel in Spanish', () => {
     spanish({ ...base, verdict: 'good-buy', cutPercent: 5 })
     expect(screen.getByRole('status')).toHaveTextContent('Buen momento para comprar')
     expect(screen.getByText('Valor de mercado')).toBeInTheDocument()
-    expect(screen.getByText(/tras la comisión del 5% de la casa de subastas/i, { selector: 'h3' })).toBeInTheDocument()
+    expect(screen.getByText(/tras la comisión del 5 % de la casa de subastas/i, { selector: 'h3' })).toBeInTheDocument()
     expect(screen.getByText(/precio justo|buen momento/i)).toBeInTheDocument()
     expect(screen.queryByText(/market value|good time to buy/i)).not.toBeInTheDocument()
   })
@@ -287,12 +287,39 @@ describe('InsightsPanel in Spanish', () => {
     const demand = screen.getByRole('region', { name: 'Demanda' })
     expect(within(demand).getByText('Demanda alta')).toBeInTheDocument()
     expect(within(demand).getByText('20-36 unidades')).toBeInTheDocument()
-    expect(within(demand).getByText('2.0-4.0 días')).toBeInTheDocument()
+    expect(within(demand).getByText('2,0-4,0 días')).toBeInTheDocument() // a decimal comma
     expect(within(demand).getByText(/basado en 6 horas de capturas/i)).toBeInTheDocument()
   })
 
   it('puts the prices in the vendor warning in Spanish', () => {
     spanish({ ...base, belowVendor: true, vendorSell: 500, netAtListPrice: 400 })
     expect(screen.getByRole('note')).toHaveTextContent(/un vendedor paga más que la casa de subastas.*recibirías 4p.*un vendedor paga 5p/i)
+  })
+})
+
+describe('InsightsPanel counts', () => {
+  const demand = {
+    observedHours: 4, soldLow: 200000, soldHigh: 400000, sales: 12345, listed: 81368, perDayLow: 224561, perDayHigh: 435837,
+    sellThroughPct: 30, daysOfSupplyLow: 0.1, daysOfSupplyHigh: 1.3, level: 'high' as const,
+  }
+
+  it('groups the digits of large counts so they can be read', () => {
+    render(<InsightsPanel insights={{ ...base, demand }} />)
+    const section = screen.getByRole('region', { name: 'Demand' })
+    expect(within(section).getByText('224,561-435,837 units')).toBeInTheDocument()
+    expect(within(section).getByText('81,368 units')).toBeInTheDocument()
+    expect(within(section).getByText('12,345')).toBeInTheDocument()
+    expect(within(section).getByText('0.1-1.3 days')).toBeInTheDocument()
+  })
+
+  it('groups them with dots in Spanish', () => {
+    render(
+      <I18nProvider lang="es" setLang={() => {}}>
+        <InsightsPanel insights={{ ...base, demand }} />
+      </I18nProvider>,
+    )
+    const section = screen.getByRole('region', { name: 'Demanda' })
+    expect(within(section).getByText('224.561-435.837 unidades')).toBeInTheDocument()
+    expect(within(section).getByText('12.345')).toBeInTheDocument()
   })
 })

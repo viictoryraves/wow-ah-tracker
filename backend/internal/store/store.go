@@ -181,6 +181,15 @@ func (s *Store) DeleteOlderThan(cutoff time.Time) (int64, error) {
 	return res.RowsAffected()
 }
 
+// DeleteAbove deletes the snapshot rows whose lowest price is above max copper, and returns how many.
+func (s *Store) DeleteAbove(max int64) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM snapshots WHERE min > ?`, max)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // SaveFlows stores how each item's listings moved in a house at snapshot time ts.
 // Saving the same (house, item, ts) again replaces the previous row.
 func (s *Store) SaveFlows(houseID int, ts time.Time, flows []poller.ItemFlow) error {
@@ -307,10 +316,13 @@ func (s *Store) ItemFacts(id int) (ItemFacts, error) {
 }
 
 // ItemsMissingName lists up to limit item IDs that have prices but no complete
-// item record yet (no name, or an icon, vendor price or category that was never fetched).
+// item record yet (no name, or an icon, vendor price or category that was never fetched). The items worth
+// the most on the market (lowest price x units listed) come first, so the dear and the popular ones show up
+// in the lists long before the long tail does.
 func (s *Store) ItemsMissingName(limit int) ([]int, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT item_id FROM snapshots
-		WHERE item_id NOT IN (SELECT id FROM items WHERE icon IS NOT NULL AND vendor_sell IS NOT NULL AND class_id IS NOT NULL) LIMIT ?`, limit)
+	rows, err := s.db.Query(`SELECT item_id FROM snapshots
+		WHERE item_id NOT IN (SELECT id FROM items WHERE icon IS NOT NULL AND vendor_sell IS NOT NULL AND class_id IS NOT NULL)
+		GROUP BY item_id ORDER BY MAX(min * quantity) DESC, item_id LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -336,6 +348,9 @@ type ItemSummary struct {
 	// Units sold or cancelled (low) and every unit that left (high) since ItemQuery.Since.
 	SoldLow  int `json:"soldLow"`
 	SoldHigh int `json:"soldHigh"`
+	// Current is false when the item is not on sale in the latest snapshot of the market: the price is then
+	// the last one seen, not the lowest now.
+	Current bool `json:"current"`
 }
 
 // SaveItemSpanish records the Spanish name of an item and of its category. Empty texts mean Blizzard
@@ -413,7 +428,7 @@ func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
 	}
 	switch q.Sort {
 	case SortPrice:
-		order = "sn.min DESC, " + name
+		order = "on_sale DESC, sn.min DESC, " + name // a price last seen earlier does not outrank one on sale now
 	case SortSoldLow:
 		order = "sold_low DESC, " + name
 	case SortSoldHigh:
@@ -421,6 +436,7 @@ func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
 	}
 	rows, err := s.db.Query(`
 		SELECT i.id, `+name+`, COALESCE(i.icon, ''), sn.min, sn.median, sn.quantity,
+		       (sn.ts = (SELECT MAX(ts) FROM snapshots WHERE realm_id = ?1)) AS on_sale,
 		       (SELECT COALESCE(SUM(f.sold_low), 0) FROM flows f
 		         WHERE f.house_id = ?1 AND f.item_id = i.id AND f.ts >= ?7) AS sold_low,
 		       (SELECT COALESCE(SUM(f.sold_high), 0) FROM flows f
@@ -440,7 +456,7 @@ func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
 	var out []ItemSummary
 	for rows.Next() {
 		var it ItemSummary
-		if err := rows.Scan(&it.ID, &it.Name, &it.Icon, &it.Min, &it.Median, &it.Quantity, &it.SoldLow, &it.SoldHigh); err != nil {
+		if err := rows.Scan(&it.ID, &it.Name, &it.Icon, &it.Min, &it.Median, &it.Quantity, &it.Current, &it.SoldLow, &it.SoldHigh); err != nil {
 			return nil, err
 		}
 		out = append(out, it)

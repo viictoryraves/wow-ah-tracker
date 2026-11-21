@@ -487,9 +487,10 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
                             <img src={item.icon} alt="" width={28} height={28} loading="lazy" className="icon" />
                           )}
                           <span className="name">{item.name}</span>
+                          {!item.current && <span className="not-listed">{t('notListedNow')}</span>}
                         </button>
                       </td>
-                      <td className="num price"><Money copper={item.min} /></td>
+                      <td className={`num price${item.current ? '' : ' stale'}`}><Money copper={item.min} /></td>
                       <td className="num">{formatCount(item.soldLow, lang)}</td>
                       <td className="num">{formatCount(item.soldHigh, lang)}</td>
                     </tr>
@@ -509,7 +510,7 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
                 {selected.name}
               </h2>
               <p className="now">
-                <span className="muted">{t('lowestNow')}</span> <strong><Money copper={selected.min} /></strong>
+                <span className="muted">{t(selected.current ? 'lowestNow' : 'lastPriceSeen')}</span> <strong><Money copper={selected.min} /></strong>
               </p>
 
               {currentInsights && <InsightsPanel insights={currentInsights} />}

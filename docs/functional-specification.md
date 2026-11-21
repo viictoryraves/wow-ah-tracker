@@ -61,8 +61,9 @@ One user: a Forever player on a Mac who wants to watch prices.
 | FR-2.2 | The chart shows the lowest price and the median price, labels the time axis with times of day for spans under two days and dates otherwise, and marks each snapshot (up to 72). | ✅ |
 | FR-2.3 | The user can read the exact values of any snapshot by hovering, tapping, or with the arrow, Home and End keys; the latest is shown by default. | ✅ |
 | FR-2.4 | The chart has a text description for screen readers. | ✅ |
-| FR-2.5 | Prices are written as gold, silver and copper. | ✅ |
+| FR-2.5 | Prices are written as gold, silver and copper, the way the game counts them: 100 copper make a silver and 100 silver a gold, so silver and copper never show 100 or more. A price is rounded to a whole copper, a loss is written with its sign in front, and zero parts are left out. Counts and gold are written with the language's digit grouping. | ✅ |
 | FR-2.6 | Each house is its own market: Alliance, Horde and Blackwater prices are never mixed. | ✅ |
+| FR-2.7 | A listing priced above 214,748g 36s 47c, the most a character can hold, is not a price: nobody can pay it, and players park an item at the highest price the auction house accepts (9,999,999g 99s 99c) to keep it out of reach. Such listings count neither in the prices and quantities nor, when they disappear, as sales; ones stored earlier are deleted. | ✅ |
 
 ### 3.3 Search, browse and navigation
 
@@ -81,6 +82,8 @@ One user: a Forever player on a Mac who wants to watch prices.
 | FR-3.14 | The page has its own emblem, shown beside the title and as the browser tab icon. It is original artwork, not a Blizzard or WoW mark. | ✅ |
 | FR-3.15 | Item and category names can be served in Spanish (Spain) on request. A search then matches the Spanish and the English name, and an item with no Spanish name yet keeps its English one. | ✅ |
 | FR-3.16 | The whole page can be used in **English or Spanish (Spain)**: labels, messages, insights, demand text, chart text and notes, plus numbers, percentages ("12,3 %"), dates and times, and the coin letters (oro, plata, cobre). A two-button toggle in the header shows both languages, each named in itself, and marks the current one. The first visit follows the browser (any Spanish gives Spanish, anything else English); a choice is remembered and wins afterwards. Changing language reloads the item and category names without closing the open item, and sets the page language and title. | ✅ |
+| FR-3.17 | An item that was not on sale in the market's latest snapshot is marked "Not listed now", its price is called the "Last price seen" and not the lowest now, and a price sort lists the items on sale before it. | ✅ |
+| FR-3.18 | Names are looked up for the items worth the most on the market first (lowest price × units listed), so the dear and the popular items appear in the lists before the long tail. | ✅ |
 | FR-3.6 | The ruleset, faction, search, category, sort order and item are kept in the address, so a view can be shared and reloaded. An unknown market falls back to the first one. | ✅ |
 | FR-3.7 | Loading, empty and error states are shown; the page says when no market has data yet. | ✅ |
 | FR-3.8 | Keyboard focus moves to the item heading when an item is picked. | ✅ |

@@ -620,3 +620,73 @@ func TestItemsWithoutASpanishNameAreListedForBackfilling(t *testing.T) {
 		t.Fatalf("got %v, want only the vest", ids)
 	}
 }
+
+func TestRowsPricedAboveWhatAnyoneCouldPayCanBeDeleted(t *testing.T) {
+	s := newStore(t)
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{stat(1, 500, 500, 500, 1), stat(2, 99999999999, 99999999999, 99999999999, 1), stat(3, 2147483647, 2147483647, 2147483647, 1)}))
+	n, err := s.DeleteAbove(2147483647)
+	must(t, err)
+	if n != 1 {
+		t.Errorf("deleted %d rows, want 1", n)
+	}
+	for id, want := range map[int]int{1: 1, 2: 0, 3: 1} {
+		if h, _ := s.History(110, id, time.Time{}); len(h) != want {
+			t.Errorf("item %d has %d points, want %d", id, len(h), want)
+		}
+	}
+}
+
+func TestTheItemsWorthMostAreNamedFirst(t *testing.T) {
+	s := newStore(t)
+	// value on the market = lowest price x units listed
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{
+		stat(1, 10, 10, 10, 5),                // 50
+		stat(2, 5000000, 5000000, 5000000, 1), // 5,000,000: a dear single item
+		stat(3, 20, 20, 20, 100000),           // 2,000,000: a popular cheap one
+		stat(4, 100, 100, 100, 10),            // 1,000
+	}))
+	ids, err := s.ItemsMissingName(10)
+	must(t, err)
+	want := []int{2, 3, 4, 1}
+	for i := range want {
+		if i >= len(ids) || ids[i] != want[i] {
+			t.Fatalf("order = %v, want %v", ids, want)
+		}
+	}
+	first, _ := s.ItemsMissingName(1)
+	if len(first) != 1 || first[0] != 2 {
+		t.Errorf("with a limit of 1 got %v, want the most valuable", first)
+	}
+}
+
+// onAndOffSale: items 7 (cloth) and 8 (vest) are listed in the latest snapshot; item 9 was last seen an hour earlier.
+func onAndOffSale(t *testing.T) *Store {
+	t.Helper()
+	s := categorised(t)
+	must(t, s.SaveSnapshot(110, t0.Add(time.Hour), []poller.ItemStats{stat(7, 28, 30, 30, 500), stat(8, 300, 315, 315, 9)}))
+	return s
+}
+
+func TestResultsSayWhetherTheItemIsOnSaleNow(t *testing.T) {
+	s := onAndOffSale(t)
+	res, err := s.SearchItems(110, ItemQuery{Query: "linen", Limit: 10})
+	must(t, err)
+	now := map[string]bool{}
+	for _, r := range res {
+		now[r.Name] = r.Current
+	}
+	if !now["Linen Cloth"] || !now["Linen Vest"] || now["Linen Bandage"] {
+		t.Fatalf("current = %v, want the cloth and the vest on sale and the bandage (last seen an hour ago) not", now)
+	}
+}
+
+func TestByPriceTheItemsOnSaleNowComeBeforeOnesLastSeenEarlier(t *testing.T) {
+	s := onAndOffSale(t)
+	// the bandage's old price (5c) is below the others, so test the other way round too
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{stat(9, 900000, 900000, 900000, 3)})) // an old, dear price
+	res, err := s.SearchItems(110, ItemQuery{Query: "linen", Sort: SortPrice, Limit: 10})
+	must(t, err)
+	if got := names(res); len(got) != 3 || got[0] != "Linen Vest" || got[1] != "Linen Cloth" || got[2] != "Linen Bandage" {
+		t.Fatalf("got %v, want the live ones by price, then the one that is not on sale", got)
+	}
+}

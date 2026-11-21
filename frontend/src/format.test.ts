@@ -1,4 +1,4 @@
-import { formatAgo, formatSold, formatClock, formatMoney, formatPct } from './format'
+import { formatAgo, formatClock, formatDecimal, formatMoney, formatPct, formatPercent, formatSold, moneyParts } from './format'
 
 describe('formatMoney', () => {
   it('splits copper into gold, silver and copper', () => {
@@ -94,5 +94,62 @@ describe('in Spanish', () => {
   it('counts units sold', () => {
     expect(formatSold(12, 18, 'es')).toBe('12–18 vendidas')
     expect(formatSold(7, 7, 'es')).toBe('7 vendidas')
+  })
+})
+
+describe('moneyParts', () => {
+  it('splits copper at 100 per silver and 100 per gold', () => {
+    expect(moneyParts(123456)).toEqual({ negative: false, gold: 12, silver: 34, copper: 56 })
+    expect(moneyParts(10000)).toEqual({ negative: false, gold: 1, silver: 0, copper: 0 })
+    expect(moneyParts(99)).toEqual({ negative: false, gold: 0, silver: 0, copper: 99 })
+    expect(moneyParts(100)).toEqual({ negative: false, gold: 0, silver: 1, copper: 0 })
+  })
+  it('never lets silver or copper reach 100', () => {
+    for (const c of [9999, 10001, 10099, 10100, 999999, 2147483647, 99999999999]) {
+      const p = moneyParts(c)!
+      expect(p.silver).toBeLessThan(100)
+      expect(p.copper).toBeLessThan(100)
+      expect(p.gold * 10000 + p.silver * 100 + p.copper).toBe(c)
+    }
+  })
+  it('rounds a fraction to the nearest copper, because there is no smaller coin', () => {
+    expect(moneyParts(56.4)).toEqual({ negative: false, gold: 0, silver: 0, copper: 56 })
+    expect(moneyParts(99.6)).toEqual({ negative: false, gold: 0, silver: 1, copper: 0 }) // not "99.6c", not "0s 100c"
+  })
+  it('keeps the sign apart from the amount', () => {
+    expect(moneyParts(-12345)).toEqual({ negative: true, gold: 1, silver: 23, copper: 45 })
+    expect(moneyParts(-0.2)).toEqual({ negative: false, gold: 0, silver: 0, copper: 0 }) // rounds to nothing: not "-0c"
+  })
+  it('has no amount for something that is not a number', () => {
+    expect(moneyParts(NaN)).toBeNull()
+    expect(moneyParts(Infinity)).toBeNull()
+  })
+})
+
+describe('formatMoney edge cases', () => {
+  it('writes a negative amount with its sign in front, the way a loss reads', () => {
+    expect(formatMoney(-12345)).toBe('-1g 23s 45c')
+    expect(formatMoney(-5)).toBe('-5c')
+  })
+  it('rounds to whole copper', () => {
+    expect(formatMoney(12345.6)).toBe('1g 23s 46c')
+    expect(formatMoney(99.6)).toBe('1s')
+  })
+  it('shows a dash for something that is not a number', () => {
+    expect(formatMoney(NaN)).toBe('–')
+  })
+  it('keeps the most a character can hold readable', () => {
+    expect(formatMoney(2147483647)).toBe('214,748g 36s 47c')
+    expect(formatMoney(99999999999, 'es')).toBe('9.999.999o 99p 99c')
+  })
+})
+
+describe('numbers the way each language writes them', () => {
+  it('uses a decimal comma and a space before % in Spanish', () => {
+    expect(formatDecimal(0.1, 'es')).toBe('0,1')
+    expect(formatDecimal(0.1, 'en')).toBe('0.1')
+    expect(formatPercent(5, 'es')).toBe('5 %')
+    expect(formatPercent(5, 'en')).toBe('5%')
+    expect(formatPercent(15, 'en')).toBe('15%')
   })
 })

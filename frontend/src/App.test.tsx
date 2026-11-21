@@ -27,13 +27,13 @@ const realms = [pvp, normal]
 const UPDATED = '2026-11-21T10:22:56Z' // when the default market's prices were last updated
 
 const categories = [
-  { id: 4, name: 'Armor', soldLow: 10, soldHigh: 20 },
-  { id: 0, name: 'Consumable', soldLow: 0, soldHigh: 0 },
-  { id: 7, name: 'Trade Goods', soldLow: 100, soldHigh: 150 },
+  { id: 4, name: 'Armor', soldLow: 10, soldHigh: 20, current: true },
+  { id: 0, name: 'Consumable', soldLow: 0, soldHigh: 0, current: true },
+  { id: 7, name: 'Trade Goods', soldLow: 100, soldHigh: 150, current: true },
 ]
 
 const linen = {
-  id: 7, name: 'Linen Cloth', icon: 'https://icons/linen.jpg', min: 12345, median: 15000, quantity: 80, soldLow: 12, soldHigh: 18,
+  id: 7, name: 'Linen Cloth', icon: 'https://icons/linen.jpg', min: 12345, median: 15000, quantity: 80, soldLow: 12, soldHigh: 18, current: true,
 }
 const insights = {
   min: 12345, marketValue: 20000, vsMarketPct: -38.3, cheaperThanPct: 90, change1dPct: -2, change7dPct: 5,
@@ -445,8 +445,8 @@ describe('attribution', () => {
 
 describe('item categories', () => {
   const categorySelect = () => screen.getByLabelText(/^category$/i)
-  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2 }
-  const vest = { id: 8, name: 'Linen Vest', icon: '', min: 300, median: 315, quantity: 9, soldLow: 0, soldHigh: 0 }
+  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2, current: true }
+  const vest = { id: 8, name: 'Linen Vest', icon: '', min: 300, median: 315, quantity: 9, soldLow: 0, soldHigh: 0, current: true }
 
   async function renderCategories(routes: Routes = {}) {
     const { user, calls } = await renderApp({
@@ -528,7 +528,7 @@ describe('item categories', () => {
   })
 
   it('drops the category when the new house does not sell it', async () => {
-    const { user } = await renderCategories({ '/api/categories?realm=113': [{ id: 4, name: 'Armor', soldLow: 0, soldHigh: 0 }] })
+    const { user } = await renderCategories({ '/api/categories?realm=113': [{ id: 4, name: 'Armor', soldLow: 0, soldHigh: 0, current: true }] })
     await user.selectOptions(categorySelect(), '7')
     await screen.findAllByRole('button', { name: /cloth/i })
     await user.selectOptions(factionSelect(), '113')
@@ -679,7 +679,7 @@ describe('last update and automatic refresh', () => {
     let first = 'Silk Cloth'
     const { user } = await renderTimed({
       '/api/status?realm=110': () => new Response(JSON.stringify(status)),
-      '/api/items?realm=110&category=7': () => new Response(JSON.stringify([{ id: 9, name: first, icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2 }])),
+      '/api/items?realm=110&category=7': () => new Response(JSON.stringify([{ id: 9, name: first, icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2, current: true }])),
     })
     await user.selectOptions(await screen.findByLabelText(/^category$/i), '7') // the categories load after the page
     expect(await screen.findByRole('button', { name: /silk cloth/i })).toBeInTheDocument()
@@ -710,7 +710,7 @@ describe('last update and automatic refresh', () => {
 })
 
 describe('sorting results', () => {
-  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2 }
+  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2, current: true }
   const header = (name: RegExp) => screen.getByRole('columnheader', { name })
   const firstItem = () => within(screen.getAllByRole('row')[1]).getAllByRole('button')[0]
 
@@ -779,7 +779,7 @@ describe('sorting results', () => {
 })
 
 describe('front page', () => {
-  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2 }
+  const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2, current: true }
 
   it('welcomes the visitor and says how to start, before anything is searched', async () => {
     await renderApp()
@@ -867,7 +867,7 @@ describe('closing the details', () => {
   })
 
   it('switches to another item instead of closing when one is clicked', async () => {
-    const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2 }
+    const silk = { id: 9, name: 'Silk Cloth', icon: '', min: 150, median: 160, quantity: 800, soldLow: 1, soldHigh: 2, current: true }
     const ctx = await renderApp({
       '/api/items?q=cloth&realm=110': [linen, silk],
       '/api/items/9/history?realm=110&days=1': history,
@@ -938,10 +938,10 @@ describe('the main header', () => {
 })
 
 describe('Spanish', () => {
-  const lino = { id: 7, name: 'Paño de lino', icon: '', min: 123456, median: 150000, quantity: 80, soldLow: 12, soldHigh: 18 }
+  const lino = { id: 7, name: 'Paño de lino', icon: '', min: 123456, median: 150000, quantity: 80, soldLow: 12, soldHigh: 18, current: true }
   const categoriasEs = [
-    { id: 4, name: 'Armadura', soldLow: 10, soldHigh: 20 },
-    { id: 7, name: 'Objeto comerciable', soldLow: 100, soldHigh: 150 },
+    { id: 4, name: 'Armadura', soldLow: 10, soldHigh: 20, current: true },
+    { id: 7, name: 'Objeto comerciable', soldLow: 100, soldHigh: 150, current: true },
   ]
   const spanishRoutes = {
     '/api/categories?realm=110&lang=es': categoriasEs,
@@ -1074,5 +1074,46 @@ describe('Spanish', () => {
     localStorage.setItem('lang', 'es')
     await renderApp(spanishRoutes)
     expect(await screen.findByText(/precios actualizados a las/i)).toHaveTextContent(formatClock(UPDATED, 'es'))
+  })
+})
+
+describe('an item that is not on sale now', () => {
+  const gone = { ...linen, id: 7, current: false }
+
+  it('says so in the table instead of passing the old price off as the lowest now', async () => {
+    const { user } = await renderApp({ '/api/items?q=linen&realm=110': [gone, { ...linen, id: 9, name: 'Silk Cloth', current: true }] })
+    await search(user)
+    const row = (await screen.findByRole('button', { name: /linen cloth/i })).closest('tr')!
+    expect(within(row).getByText(/not listed now/i)).toBeInTheDocument()
+    const live = screen.getByRole('button', { name: /silk cloth/i }).closest('tr')!
+    expect(within(live).queryByText(/not listed now/i)).not.toBeInTheDocument()
+  })
+
+  it('calls the price in the details the last one seen, not the lowest now', async () => {
+    const { user } = await renderApp({ '/api/items?q=linen&realm=110': [gone] })
+    await search(user)
+    await user.click(await screen.findByRole('button', { name: /linen cloth/i }))
+    const details = await screen.findByRole('region', { name: /linen cloth details/i })
+    expect(within(details).getByText(/last price seen/i)).toBeInTheDocument()
+    expect(within(details).queryByText(/lowest now/i)).not.toBeInTheDocument()
+  })
+
+  it('keeps saying lowest now for an item that is on sale', async () => {
+    const { user } = await renderApp()
+    await search(user)
+    await user.click(await screen.findByRole('button', { name: /linen cloth/i }))
+    const details = await screen.findByRole('region', { name: /linen cloth details/i })
+    expect(within(details).getByText(/lowest now/i)).toBeInTheDocument()
+  })
+
+  it('says it in Spanish too', async () => {
+    localStorage.setItem('lang', 'es')
+    const { user } = await renderApp({
+      '/api/categories?realm=110&lang=es': [],
+      '/api/items?q=lino&realm=110&lang=es': [{ ...gone, name: 'Paño de lino' }],
+    })
+    await user.type(screen.getByLabelText(/buscar objetos/i), 'lino')
+    const row = (await screen.findByRole('button', { name: /paño de lino/i })).closest('tr')!
+    expect(within(row).getByText(/no está a la venta ahora/i)).toBeInTheDocument()
   })
 })

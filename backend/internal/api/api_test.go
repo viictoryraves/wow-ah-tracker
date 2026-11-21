@@ -673,3 +673,19 @@ func TestAnUnknownLanguageIsRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestItemsSayWhetherTheyAreOnSaleNow(t *testing.T) {
+	h, st := categorisedMarket(t)
+	st.SaveItem(20, "Old Cloth", "", 1)
+	st.SaveItemClass(20, 7, "Trade Goods")
+	save(t, st, 110, time.Now().Add(-2*time.Hour), stat(20, 500, 3)) // last seen two hours before the others
+	var got []store.ItemSummary
+	json.Unmarshal(get(t, h, "/api/items?q=cloth&realm=110").Body.Bytes(), &got)
+	now := map[string]bool{}
+	for _, i := range got {
+		now[i.Name] = i.Current
+	}
+	if !now["Linen Cloth"] || now["Old Cloth"] {
+		t.Errorf("current = %v, want Linen Cloth on sale and Old Cloth not", now)
+	}
+}

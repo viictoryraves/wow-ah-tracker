@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { formatCount, formatPct } from './format'
+import { formatCount, formatDecimal, formatPct, formatPercent } from './format'
 import { useI18n } from './i18nContext'
-import type { Key } from './i18n'
+import type { Key, Lang } from './i18n'
 import { Money } from './Money'
 import type { Demand, DemandLevel, Insights, Verdict } from './api'
 
@@ -40,22 +40,22 @@ function Row({ label, value, tone }: { label: string; value: ReactNode; tone?: T
   )
 }
 
-/** "30-90", or a single number when both estimates agree. */
-function range(low: number, high: number): string {
+/** "30-90", or a single number when both estimates agree, with the digits grouped. */
+function range(low: number, high: number, lang: Lang): string {
   const a = Math.round(low)
   const b = Math.round(high)
-  return a === b ? `${a}` : `${a}-${b}`
+  return a === b ? formatCount(a, lang) : `${formatCount(a, lang)}-${formatCount(b, lang)}`
 }
 
 function DemandSection({ demand: d }: { demand: Demand }) {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const hours = Math.round(d.observedHours)
   // Sales are measured between two snapshots, so right after the first one there is nothing to show yet.
   const measuring = d.level === 'unknown' && d.observedHours < 1
   const daysOfSupply = (low: number | null, high: number | null) => {
     if (low === null) return t('na') // nothing sells
-    if (high === null) return t('daysAtLeast', { n: low.toFixed(1) }) // at best this long; the cautious estimate saw no sales
-    return t('daysOf', { range: `${low.toFixed(1)}-${high.toFixed(1)}` })
+    if (high === null) return t('daysAtLeast', { n: formatDecimal(low, lang) }) // at best this long; the cautious estimate saw no sales
+    return t('daysOf', { range: `${formatDecimal(low, lang)}-${formatDecimal(high, lang)}` })
   }
   return (
     <section aria-label={t('demand')} className="demand">
@@ -67,12 +67,12 @@ function DemandSection({ demand: d }: { demand: Demand }) {
         <p className="muted small">{t('measuring')}</p>
       ) : (
         <>
-          <Row label={t('soldPerDay')} value={t('unitsOf', { range: range(d.perDayLow, d.perDayHigh) })} />
+          <Row label={t('soldPerDay')} value={t('unitsOf', { range: range(d.perDayLow, d.perDayHigh, lang) })} />
           <Row label={t('daysOfSupply')} value={daysOfSupply(d.daysOfSupplyLow, d.daysOfSupplyHigh)} />
-          <Row label={t('listingsSold')} value={String(d.sales)} />
-          <Row label={t('newlyListed')} value={t('unitsOf', { range: d.listed })} />
+          <Row label={t('listingsSold')} value={formatCount(d.sales, lang)} />
+          <Row label={t('newlyListed')} value={t('unitsOf', { range: formatCount(d.listed, lang) })} />
           <p className="muted small">
-            {t('demandBasis', { hours: t(hours === 1 ? 'hoursOne' : 'hoursMany', { n: hours }) })}
+            {t('demandBasis', { hours: t(hours === 1 ? 'hoursOne' : 'hoursMany', { n: formatCount(hours, lang) }) })}
           </p>
         </>
       )}
@@ -83,7 +83,7 @@ function DemandSection({ demand: d }: { demand: Demand }) {
 export function InsightsPanel({ insights: i }: { insights: Insights }) {
   const { lang, t, tn } = useI18n()
   const pct = (n: number | null) => formatPct(n, lang)
-  const cut = `${i.cutPercent}%`
+  const cut = formatPercent(i.cutPercent, lang)
   const commodity = i.commodity === true
   return (
     <section aria-label={t('insights')}>
@@ -95,7 +95,7 @@ export function InsightsPanel({ insights: i }: { insights: Insights }) {
       <Row label={t('lowestVsMarket')} value={pct(i.vsMarketPct)} />
       <Row
         label={t('cheaperThan')}
-        value={t('cheaperThanValue', { pct: lang === 'es' ? `${formatCount(Math.round(i.cheaperThanPct), lang)} %` : `${Math.round(i.cheaperThanPct)}%` })}
+        value={t('cheaperThanValue', { pct: formatPercent(Math.round(i.cheaperThanPct), lang) })}
       />
       <Row label={t('change1d')} value={pct(i.change1dPct)} />
       <Row label={t('change7d')} value={pct(i.change7dPct)} />
@@ -144,7 +144,7 @@ export function InsightsPanel({ insights: i }: { insights: Insights }) {
       )}
 
       <p className="muted small">
-        {t('insightsBasis', { count: t(i.points === 1 ? 'snapshotsOne' : 'snapshotsMany', { n: i.points }) })}
+        {t('insightsBasis', { count: t(i.points === 1 ? 'snapshotsOne' : 'snapshotsMany', { n: formatCount(i.points, lang) }) })}
       </p>
     </section>
   )

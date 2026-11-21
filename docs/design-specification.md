@@ -116,7 +116,19 @@ Facts that shaped the design (found by probing and from Blizzard's docs):
   woken by new snapshots and every 5 minutes) and retention. It cannot delay a poll (decision D-6).
 - The previous snapshot of each house is kept **in memory** to compute flows; a restart skips one comparison.
 
-### 5.2 `poller`: pure statistics (FR-1.4, FR-5.*)
+### 5.2 `poller`: pure statistics (FR-1.4, FR-2.7, FR-5.*)
+
+**How money works.** The unit everywhere is the copper, as a whole number: 100 copper = 1 silver, 100 silver = 1 gold,
+so 10,000 copper = 1 gold. Blizzard sends copper: a regular listing has a total `buyout` (in the live Forever houses
+every one has quantity 1) and a commodity has a `unit_price`, which the client turns into a total so both read alike.
+Every stored and served price is **per unit**. A character cannot hold more than 2^31-1 copper (214,748g 36s 47c), so
+a price above that cannot be paid: in the live data real prices end near 210g at the 99.9th percentile, then there is
+a gap, then placeholders at 33,333,333,333, 99,999,990,499 and 99,999,999,999 copper (the game's maximum buyout).
+
+- `Buyable(auctions)` drops listings whose unit price is above `MaxUnitPrice` (2147483647). It runs once in
+  `pollHouse`, before `Reduce` and before the flows are compared, so a parked listing is neither a price nor a sale.
+  Listings without a buyout or quantity are kept for `Reduce` to ignore. `Cleanup` also deletes stored rows whose
+  lowest price is above the cap (`Store.DeleteAbove`).
 
 - `Reduce`: per item, unit price = buyout / quantity per listing; min; quantity-weighted median (first price at which
   the cumulative quantity reaches half); weighted average.
@@ -180,6 +192,13 @@ never through a shell.
   twice nor steals focus.
 - **Chart:** hand-written SVG (no library): 480×260 viewBox, five time labels chosen by time (not by index) on real
   snapshots, a marker per snapshot up to 72, pointer and keyboard readout, text description for screen readers.
+- **Money display:** `moneyParts` (in `format.ts`) is the single place that splits copper: it rounds to a whole copper
+  first (so 99.6 is a silver, never "100c"), keeps the sign apart and returns nothing for NaN or infinity. `formatMoney`
+  (text) and `Money` (with coins) both use it. Counts, percentages and decimals go through `formatCount`,
+  `formatPercent` and `formatDecimal`, so Spanish gets its dots and commas.
+- **Not on sale now:** the API's `current` flag (`snapshot ts = the market's latest`) drives the "Not listed now" tag, a
+  muted price and the "Last price seen" label. `sort=price` orders `on_sale DESC` first. `ItemsMissingName` orders by
+  `MAX(min × quantity) DESC`.
 - **Results table:** a real `<table>`; the Price and Sold headers are buttons with `aria-sort` that toggle `sort`
   (`price`, `sold-low`, `sold-high` or none) and so re-run the search; the arrow is drawn by CSS.
 - **Languages:** `i18n.ts` holds the English messages (the source of the `Key` type) and the Spanish ones

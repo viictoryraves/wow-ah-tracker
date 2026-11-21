@@ -22,6 +22,7 @@ export interface ItemSummary {
   quantity: number
   soldLow: number // units sold or cancelled in the last 7 days
   soldHigh: number // every unit that left in the last 7 days
+  current: boolean // on sale in the latest snapshot; false: min is the last price seen, not the lowest now
 }
 
 export interface Point {

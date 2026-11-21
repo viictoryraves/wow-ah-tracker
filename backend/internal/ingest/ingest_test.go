@@ -5,16 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/manuel/wow-ah-tracker/internal/blizzard"
+	"github.com/manuel/wow-ah-tracker/internal/poller"
 	"github.com/manuel/wow-ah-tracker/internal/store"
 )
 
 var t0 = time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
 
 type fakeSource struct {
+	mu               sync.Mutex // the polling goroutine reads lastMod while a test moves it on
 	lastMod          time.Time
 	rulesets         []blizzard.Ruleset
 	rulesetsErr      error
@@ -34,6 +37,18 @@ type fakeSource struct {
 type category struct {
 	id   int
 	name string
+}
+
+func (f *fakeSource) setLastMod(t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastMod = t
+}
+
+func (f *fakeSource) published() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastMod
 }
 
 func (f *fakeSource) Rulesets(context.Context, string) ([]blizzard.Ruleset, error) {
@@ -56,9 +71,9 @@ func (f *fakeSource) RulesetAuctions(_ context.Context, _ string, _, houseID int
 		return nil, time.Time{}, blizzard.ErrNotModified
 	}
 	if commodities {
-		return f.houseCommodities[houseID], f.lastMod, nil
+		return f.houseCommodities[houseID], f.published(), nil
 	}
-	return f.houseAuctions[houseID], f.lastMod, nil
+	return f.houseAuctions[houseID], f.published(), nil
 }
 
 func (f *fakeSource) ItemInfo(ctx context.Context, _ string, id int) (blizzard.ItemInfo, error) {
@@ -69,7 +84,9 @@ func (f *fakeSource) ItemInfo(ctx context.Context, _ string, id int) (blizzard.I
 			return blizzard.ItemInfo{}, ctx.Err()
 		}
 	}
+	f.mu.Lock()
 	f.infoCalls++
+	f.mu.Unlock()
 	n, ok := f.names[id]
 	if !ok {
 		return blizzard.ItemInfo{}, errors.New("404")
@@ -757,7 +774,7 @@ func TestPollingKeepsItsRhythmWhileItemNamesAreSlowToLoad(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	// Blizzard publishes again while the name lookups are still hanging
-	src.lastMod = t0.Add(time.Hour)
+	src.setLastMod(t0.Add(time.Hour))
 	deadline = time.Now().Add(5 * time.Second)
 	for {
 		if pts, _ := st.History(110, 4409, time.Time{}); len(pts) == 2 {
@@ -840,5 +857,59 @@ func TestFillSpanishNamesBackfillsItemsNamedBeforeSpanishExisted(t *testing.T) {
 	}
 	if src.infoCalls != calls {
 		t.Errorf("asked Blizzard again (%d -> %d calls): an item with no Spanish text must be marked as done", calls, src.infoCalls)
+	}
+}
+
+func TestListingsParkedAtAnImpossiblePriceAreNeitherPricesNorSales(t *testing.T) {
+	const parked = 99999999999 // 9,999,999g 99s 99c: more than a character can hold
+	src := &fakeSource{
+		lastMod: t0,
+		houseAuctions: map[int][]blizzard.Auction{110: {
+			{ID: 1, ItemID: 4409, Buyout: 900, Quantity: 1, TimeLeft: "LONG"},
+			{ID: 2, ItemID: 4409, Buyout: parked, Quantity: 1, TimeLeft: "LONG"}, // parked beside a real listing
+			{ID: 3, ItemID: 5000, Buyout: parked, Quantity: 1, TimeLeft: "LONG"}, // an item only parked
+		}},
+	}
+	ing, st := setup(t, src)
+	r := Realm{ID: 1, Name: "PvP", Houses: []House{{ID: 110, Faction: "alliance"}}}
+	if _, err := ing.PollRealm(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := st.History(110, 5000, time.Time{}); len(h) != 0 {
+		t.Errorf("an item only listed at an impossible price has history %+v, want none", h)
+	}
+	vest, _ := st.History(110, 4409, time.Time{})
+	if len(vest) != 1 || vest[0].Min != 900 || vest[0].Median != 900 || vest[0].Avg != 900 || vest[0].Quantity != 1 {
+		t.Errorf("vest = %+v, want the real listing only (900c x1)", vest)
+	}
+
+	// the next snapshot: both parked listings are taken down, which is not a sale
+	src.houseAuctions[110] = []blizzard.Auction{{ID: 1, ItemID: 4409, Buyout: 900, Quantity: 1, TimeLeft: "LONG"}}
+	src.lastMod = t0.Add(time.Hour)
+	if _, err := ing.PollRealm(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int{4409, 5000} {
+		if f, _ := st.FlowHistory(110, id, time.Time{}); len(f) != 0 && (f[0].SoldHigh != 0 || f[0].Sales != 0) {
+			t.Errorf("item %d flows = %+v: a parked listing leaving is not a sale", id, f)
+		}
+	}
+}
+
+func TestCleanupAlsoRemovesStoredPricesNoPlayerCouldPay(t *testing.T) {
+	ing, st := setup(t, source())
+	st.SaveSnapshot(110, t0, []poller.ItemStats{
+		{ItemID: 1, Min: 500, Median: 500, Avg: 500, Quantity: 1},
+		{ItemID: 2, Min: 99999999999, Median: 99999999999, Avg: 99999999999, Quantity: 1},
+	})
+	ing.now = func() time.Time { return t0 }
+	if _, err := ing.Cleanup(30); err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := st.History(110, 2, time.Time{}); len(h) != 0 {
+		t.Errorf("parked history kept: %+v", h)
+	}
+	if h, _ := st.History(110, 1, time.Time{}); len(h) != 1 {
+		t.Errorf("real history lost: %+v", h)
 	}
 }

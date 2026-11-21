@@ -176,6 +176,7 @@ func (i *Ingester) pollHouse(ctx context.Context, r Realm, h House) (houseResult
 	if err != nil {
 		return houseResult{}, err
 	}
+	auctions = poller.Buyable(auctions) // listings parked out of anyone's reach are neither prices nor sales
 	stats := poller.Reduce(auctions)
 	if err := i.st.SaveSnapshot(h.ID, lm, stats); err != nil {
 		return houseResult{}, err
@@ -249,9 +250,15 @@ func (i *Ingester) fetchHouse(ctx context.Context, r Realm, h House, since time.
 	return append(regular, commodities...), kinds, lm, nil
 }
 
-// Cleanup deletes snapshots older than retentionDays.
+// Cleanup deletes snapshots older than retentionDays, and any stored price above what a player could pay
+// (kept from before such listings were dropped on arrival).
 func (i *Ingester) Cleanup(retentionDays int) (int64, error) {
-	return i.st.DeleteOlderThan(i.now().Add(-time.Duration(retentionDays) * 24 * time.Hour))
+	old, err := i.st.DeleteOlderThan(i.now().Add(-time.Duration(retentionDays) * 24 * time.Hour))
+	if err != nil {
+		return old, err
+	}
+	parked, err := i.st.DeleteAbove(poller.MaxUnitPrice)
+	return old + parked, err
 }
 
 // FillItemNames looks up names and icons for up to limit items that have
