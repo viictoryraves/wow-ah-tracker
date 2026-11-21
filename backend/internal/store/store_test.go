@@ -458,6 +458,23 @@ func TestHasSnapshotTellsWhetherAHouseAlreadyHasThatMoment(t *testing.T) {
 	}
 }
 
+func TestLatestSnapshotIsTheNewestMomentOfAHouse(t *testing.T) {
+	s := newStore(t)
+	if _, ok, err := s.LatestSnapshot(110); err != nil || ok {
+		t.Fatalf("an empty database has no latest snapshot, got ok=%v err=%v", ok, err)
+	}
+	must(t, s.SaveSnapshot(110, t0, []poller.ItemStats{stat(7, 1, 1, 1, 1)}))
+	must(t, s.SaveSnapshot(110, t0.Add(2*time.Hour), []poller.ItemStats{stat(7, 1, 1, 1, 1)}))
+	must(t, s.SaveSnapshot(110, t0.Add(time.Hour), []poller.ItemStats{stat(7, 1, 1, 1, 1)}))
+	must(t, s.SaveSnapshot(113, t0.Add(5*time.Hour), []poller.ItemStats{stat(7, 1, 1, 1, 1)}))
+
+	got, ok, err := s.LatestSnapshot(110)
+	must(t, err)
+	if !ok || !got.Equal(t0.Add(2*time.Hour)) {
+		t.Errorf("latest = %v ok=%v, want %v (and not another house's)", got, ok, t0.Add(2*time.Hour))
+	}
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

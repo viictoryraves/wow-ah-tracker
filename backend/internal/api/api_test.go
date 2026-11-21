@@ -547,3 +547,46 @@ func TestConsumablesAreCategoryZero(t *testing.T) {
 		t.Errorf("got %+v, want the consumable (category 0)", got)
 	}
 }
+
+// --- when prices were last updated ---
+
+type statusBody struct {
+	UpdatedAt *string `json:"updatedAt"`
+}
+
+func TestStatusSaysWhenAMarketWasLastUpdated(t *testing.T) {
+	h, st := setup(t)
+	at := time.Date(2026, 11, 21, 10, 22, 56, 0, time.UTC)
+	save(t, st, 110, at.Add(-time.Hour), stat(7, 1, 1))
+	save(t, st, 110, at, stat(7, 1, 1))
+	save(t, st, 113, at.Add(-time.Hour), stat(7, 1, 1)) // Horde has not published the new hour yet
+
+	var got statusBody
+	rec := get(t, h, "/api/status?realm=110")
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.UpdatedAt == nil {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body)
+	}
+	if *got.UpdatedAt != "2026-11-21T10:22:56Z" {
+		t.Errorf("updatedAt = %s, want the newest snapshot of house 110 in UTC", *got.UpdatedAt)
+	}
+	json.Unmarshal(get(t, h, "/api/status?realm=113").Body.Bytes(), &got)
+	if got.UpdatedAt == nil || *got.UpdatedAt != "2026-11-21T09:22:56Z" {
+		t.Errorf("house 113 = %v, want its own, older time", got.UpdatedAt)
+	}
+}
+
+func TestStatusIsNullWhenAMarketHasNoPricesYet(t *testing.T) {
+	h, _ := setup(t)
+	var got statusBody
+	rec := get(t, h, "/api/status?realm=110")
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.UpdatedAt != nil {
+		t.Errorf("code %d body %s, want updatedAt null", rec.Code, rec.Body)
+	}
+}
+
+func TestStatusValidatesTheMarket(t *testing.T) {
+	h, _ := setup(t)
+	if rec := get(t, h, "/api/status?realm=999"); rec.Code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400", rec.Code)
+	}
+}

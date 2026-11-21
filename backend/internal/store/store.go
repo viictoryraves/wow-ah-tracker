@@ -128,6 +128,18 @@ func (s *Store) HasSnapshot(houseID int, ts time.Time) (bool, error) {
 	return err == nil, err
 }
 
+// LatestSnapshot is the newest moment a house has prices for; ok is false when it has none.
+func (s *Store) LatestSnapshot(houseID int) (at time.Time, ok bool, err error) {
+	var ts sql.NullInt64
+	if err := s.db.QueryRow(`SELECT MAX(ts) FROM snapshots WHERE realm_id = ?`, houseID).Scan(&ts); err != nil {
+		return time.Time{}, false, err
+	}
+	if !ts.Valid {
+		return time.Time{}, false, nil
+	}
+	return time.Unix(ts.Int64, 0).UTC(), true, nil
+}
+
 type Point struct {
 	Time     time.Time `json:"time"`
 	Min      int64     `json:"min"`

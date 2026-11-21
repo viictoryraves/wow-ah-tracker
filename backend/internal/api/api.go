@@ -63,6 +63,7 @@ func Handler(st *store.Store, realms []Realm, maxDays int, rules Rules) http.Han
 	mux.HandleFunc("/api/realms", s.listRealms)
 	mux.HandleFunc("/api/items", s.searchItems)
 	mux.HandleFunc("/api/categories", s.listCategories)
+	mux.HandleFunc("/api/status", s.status)
 	mux.HandleFunc("/api/items/", s.item)
 	return mux
 }
@@ -149,6 +150,28 @@ func (s *server) searchItems(w http.ResponseWriter, r *http.Request) {
 		items = []store.ItemSummary{}
 	}
 	writeJSON(w, items)
+}
+
+// status serves /api/status?realm=: when the market's prices were last updated, so a page can show
+// it and reload when a newer snapshot arrives. updatedAt is null before the first snapshot.
+func (s *server) status(w http.ResponseWriter, r *http.Request) {
+	realm, ok := s.realmParam(w, r)
+	if !ok {
+		return
+	}
+	at, found, err := s.st.LatestSnapshot(realm)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	var updatedAt *string
+	if found {
+		v := at.UTC().Format(time.RFC3339)
+		updatedAt = &v
+	}
+	writeJSON(w, struct {
+		UpdatedAt *string `json:"updatedAt"`
+	}{updatedAt})
 }
 
 // listCategories serves /api/categories?realm=: the item categories on sale in a market.
