@@ -1171,7 +1171,7 @@ describe('the investment planner on the front page', () => {
     budget: 5_000_000, spent: 101000, unspent: 4_899_000, revenue: 285000, profit: 184000, returnPct: 182.2, cutPercent: 5,
     picks: [{ id: 7, name: 'Linen Cloth', icon: '', units: 100, buy: 1010, sell: 3000, net: 2850, cost: 101000, profit: 184000, returnPct: 182.2, riskPct: 9.4, daysToSell: 0.8, soldPerDay: 131 }],
   }
-  const budget = () => screen.getByLabelText(/gold to invest/i)
+  const budget = () => screen.getByLabelText(/^gold$/i)
   const ask = async (user: ReturnType<typeof userEvent.setup>, gold = '500') => {
     await user.type(budget(), gold)
     await user.click(screen.getByRole('button', { name: /find the best buys/i }))

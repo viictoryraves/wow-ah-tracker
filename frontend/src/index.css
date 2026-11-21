@@ -272,7 +272,10 @@ header { position: relative; }
 .planner { margin-top: 16px; }
 .planner h2 { color: var(--gold); }
 .planner-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0; }
-.planner-form .field { max-width: 280px; }
+.planner-form fieldset.amount { display: flex; gap: 12px; flex-wrap: wrap; margin: 0; padding: 0; border: 0; min-inline-size: 0; }
+.planner-form legend { padding: 0; margin-bottom: 4px; font-size: 0.875rem; color: var(--muted); }
+.planner-form .field { width: 120px; }
+.planner-form .field .coin { margin: 0 2px 0 0; }
 .plan-summary { margin: 12px 0; font-weight: 600; }
 .plan-summary .muted { font-weight: 400; }
 .plan-scroll { overflow-x: auto; margin: 8px 0; }
@@ -291,6 +294,6 @@ header { position: relative; }
 .risk[data-risk='high'] { color: var(--bad); background: var(--bad-bg); }
 @media (max-width: 560px) {
   .planner-form { flex-direction: column; align-items: stretch; }
-  .planner-form .field { max-width: none; }
+  .planner-form .field { width: auto; flex: 1 1 90px; }
   .planner-form button { width: 100%; }
 }

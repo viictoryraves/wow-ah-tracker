@@ -117,11 +117,15 @@ const en = {
   // investment planner
   planTitle: 'Investment planner',
   planIntro:
-    'Enter the gold you want to invest and see the ten best items in high demand to buy and sell again, after the auction house cut.',
-  planBudget: 'Gold to invest',
-  planBudgetPlaceholder: 'e.g. 500',
+    'Enter the gold, silver and copper you want to invest and see the ten best items in high demand to buy and sell again, after the auction house cut.',
+  planBudget: 'Amount to invest',
+  planGold: 'Gold',
+  planSilver: 'Silver',
+  planCopper: 'Copper',
+  planBudgetPlaceholder: '500',
   planGo: 'Find the best buys',
-  planInvalid: 'Enter an amount of gold greater than zero and no more than 214,748.',
+  planInvalid:
+    'Enter an amount in whole gold, silver and copper: more than zero and no more than 214,748g 36s 47c, the most a character can hold.',
   planLoading: 'Looking for the best buys…',
   planNone: 'Nothing is worth buying with this budget right now.',
   planNoneWhy:
@@ -268,11 +272,15 @@ const es: Record<Key, string> = {
     'Basado en {count}. Estadísticas a partir de precios pasados, no asesoramiento financiero. Los márgenes anteriores no incluyen los depósitos.',
   planTitle: 'Planificador de inversión',
   planIntro:
-    'Indica el oro que quieres invertir y mira los diez mejores objetos de alta demanda para comprar y volver a vender, descontada la comisión de la casa de subastas.',
-  planBudget: 'Oro a invertir',
-  planBudgetPlaceholder: 'p. ej., 500',
+    'Indica el oro, la plata y el cobre que quieres invertir y mira los diez mejores objetos de alta demanda para comprar y volver a vender, descontada la comisión de la casa de subastas.',
+  planBudget: 'Cantidad a invertir',
+  planGold: 'Oro',
+  planSilver: 'Plata',
+  planCopper: 'Cobre',
+  planBudgetPlaceholder: '500',
   planGo: 'Buscar las mejores compras',
-  planInvalid: 'Indica una cantidad de oro mayor que cero y no superior a 214.748.',
+  planInvalid:
+    'Indica una cantidad en oro, plata y cobre enteros: mayor que cero y no superior a 214.748o 36p 47c, lo máximo que puede tener un personaje.',
   planLoading: 'Buscando las mejores compras…',
   planNone: 'Ahora mismo no merece la pena comprar nada con este presupuesto.',
   planNoneWhy:

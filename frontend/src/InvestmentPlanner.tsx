@@ -2,21 +2,32 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { fetchPlan } from './api'
 import type { Plan } from './api'
 import { formatCount, formatDecimal, formatPercent } from './format'
+import type { Key } from './i18n'
 import { useI18n } from './i18nContext'
 import { Money } from './Money'
 
 // No character holds more than 2^31-1 copper (214,748g 36s 47c), so no budget can be more than that.
 const MAX_BUDGET_COPPER = 2147483647
+const AMOUNTS: { coin: 'gold' | 'silver' | 'copper'; label: Key }[] = [
+  { coin: 'gold', label: 'planGold' },
+  { coin: 'silver', label: 'planSilver' },
+  { coin: 'copper', label: 'planCopper' },
+]
 // Risk is shown in words as well as a number, so it never relies on colour alone.
 const LOW_RISK_PCT = 15
 const MEDIUM_RISK_PCT = 35
 
-/** Gold typed with a point or a comma as the decimal mark, as copper; null when it is not a usable amount. */
-function toCopper(text: string): number | null {
-  const gold = Number(text.trim().replace(',', '.'))
-  if (!text.trim() || !Number.isFinite(gold)) return null
-  const copper = Math.round(gold * 10000)
-  return copper >= 1 && copper <= MAX_BUDGET_COPPER ? copper : null
+/**
+ * Gold, silver and copper as typed, as copper. Each is a whole number or empty (empty is none), and silver or
+ * copper may pass 99: 150 silver is 1 gold and 50 silver, as the game counts it. Null when it is not a usable
+ * amount: nothing at all, not whole numbers, or more than a character can hold.
+ */
+function toCopper(gold: string, silver: string, copper: string): number | null {
+  const parts = [gold, silver, copper].map((p) => p.trim())
+  if (!parts.every((p) => p === '' || /^\d+$/.test(p))) return null
+  const [g, s, c] = parts.map((p) => (p === '' ? 0 : Number(p)))
+  const total = g * 10000 + s * 100 + c
+  return total >= 1 && total <= MAX_BUDGET_COPPER ? total : null
 }
 
 interface Props {
@@ -30,7 +41,7 @@ type State = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error' } | { kind
 export function InvestmentPlanner({ realm, onOpenItem }: Props) {
   const { lang, t, tn } = useI18n()
   const headingId = useId()
-  const [text, setText] = useState('')
+  const [amount, setAmount] = useState({ gold: '', silver: '', copper: '' })
   const [state, setState] = useState<State>({ kind: 'idle' })
   const seq = useRef(0) // answers to older questions are ignored
   const asked = useRef<number>(undefined) // the budget of the plan on screen, to ask again when the language changes
@@ -60,7 +71,7 @@ export function InvestmentPlanner({ realm, onOpenItem }: Props) {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    const copper = toCopper(text)
+    const copper = toCopper(amount.gold, amount.silver, amount.copper)
     if (copper === null) {
       seq.current++ // anything still on its way is no longer wanted
       setState({ kind: 'invalid' })
@@ -78,17 +89,25 @@ export function InvestmentPlanner({ realm, onOpenItem }: Props) {
       <h2 id={headingId}>{t('planTitle')}</h2>
       <p className="muted">{t('planIntro')}</p>
       <form onSubmit={submit} className="planner-form">
-        <label className="field grow">
-          <span>{t('planBudget')}</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            value={text}
-            placeholder={t('planBudgetPlaceholder')}
-            autoComplete="off"
-            onChange={(e) => setText(e.target.value)}
-          />
-        </label>
+        <fieldset className="amount">
+          <legend>{t('planBudget')}</legend>
+          {AMOUNTS.map(({ coin, label }) => (
+            <label key={coin} className="field">
+              <span>
+                <span className="coin" data-coin={coin} aria-hidden="true" /> {t(label)}
+              </span>
+              <input
+                type="text"
+                inputMode="numeric"
+                data-coin={coin}
+                value={amount[coin]}
+                placeholder={coin === 'gold' ? t('planBudgetPlaceholder') : '0'}
+                autoComplete="off"
+                onChange={(e) => setAmount((a) => ({ ...a, [coin]: e.target.value }))}
+              />
+            </label>
+          ))}
+        </fieldset>
         <button type="submit" className="primary" disabled={realm === undefined}>
           {t('planGo')}
         </button>

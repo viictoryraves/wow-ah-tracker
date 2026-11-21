@@ -243,7 +243,8 @@ never through a shell.
   `LanguageSwitch` is a labelled group of two `aria-pressed` buttons named in their own language (no flags); clicks
   on it do not count as outside clicks for the details panel.
 - **Investment planner:** `InvestmentPlanner` is a card under the front page's hero (`key={realm}` so it starts over
-  with the market). The gold is read as text (`toCopper`: a point or comma, 1 copper to 2^31-1), sent as copper; answers
+  with the market). The amount is three text fields (gold, silver, copper; whole numbers, empty is none; `toCopper` adds
+  `g x 10000 + s x 100 + c`, 1 copper to 2^31-1) and sent as copper; answers
   to older questions are ignored (sequence counter) and the plan is asked again when the language changes. Risk is
   written in words (`riskLow/Medium/High`) as well as a number, and the table scrolls sideways on a phone. Picking an
   item calls `openItem`, which searches for its name and selects it.

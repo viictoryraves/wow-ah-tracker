@@ -32,15 +32,28 @@ function renderPlanner(props: { realm?: number; lang?: Lang; onOpenItem?: (id: n
   return { user, ...view }
 }
 
-const budgetBox = () => screen.getByLabelText(/gold to invest|oro a invertir/i)
+const goldBox = () => screen.getByLabelText(/^(gold|oro)$/i)
+const silverBox = () => screen.getByLabelText(/^(silver|plata)$/i)
+const copperBox = () => screen.getByLabelText(/^(copper|cobre)$/i)
+const budgetBox = goldBox // most questions are asked in gold
+
+/** Types an amount into the three fields, replacing what was there. */
+async function enter(user: ReturnType<typeof userEvent.setup>, gold: string, silver = '', copper = '') {
+  for (const [box, value] of [[goldBox(), gold], [silverBox(), silver], [copperBox(), copper]] as const) {
+    await user.clear(box)
+    if (value) await user.type(box, value)
+  }
+}
 const go = (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole('button', { name: /find the best buys|buscar las mejores compras/i }))
 
 describe('InvestmentPlanner', () => {
-  it('asks for an amount of gold and has nothing else until it is asked', () => {
+  it('asks for an amount in gold, silver and copper and has nothing else until it is asked', () => {
     mockPlan(plan())
     renderPlanner()
     expect(screen.getByRole('heading', { name: /investment planner/i })).toBeInTheDocument()
-    expect(budgetBox()).toHaveValue('')
+    const group = screen.getByRole('group', { name: /amount to invest/i })
+    expect(within(group).getAllByRole('textbox').map((b) => b.getAttribute('data-coin'))).toEqual(['gold', 'silver', 'copper'])
+    for (const box of [goldBox(), silverBox(), copperBox()]) expect(box).toHaveValue('')
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 
@@ -111,27 +124,41 @@ describe('InvestmentPlanner', () => {
     expect(await row(/high one/i)).toHaveTextContent(/61%.*high/i)
   })
 
-  it('accepts a decimal with a point or a comma, and anything between a copper and what a character can hold', async () => {
+  it('adds gold, silver and copper the way the game counts them, and any of them can be left empty', async () => {
     const fetchMock = mockPlan(plan())
     const { user } = renderPlanner()
-    await user.type(budgetBox(), '1,5')
-    await go(user)
-    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith('/api/plan?realm=110&budget=15000'))
-    await user.clear(budgetBox())
-    await user.type(budgetBox(), '0.0001')
-    await go(user)
-    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith('/api/plan?realm=110&budget=1'))
+    const asks = async (gold: string, silver: string, copper: string, expected: number) => {
+      await enter(user, gold, silver, copper)
+      await go(user)
+      await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(`/api/plan?realm=110&budget=${expected}`))
+    }
+    await asks('2', '3', '4', 20304) // 2g 3s 4c
+    await asks('', '50', '', 5000) // silver on its own
+    await asks('', '', '75', 75) // copper on its own
+    await asks('1', '50', '', 15000) // what "1,5 gold" used to be
+    await asks('', '150', '', 15000) // more than 99 silver is simply 1g 50s
+    await asks('', '', '12345', 12345) // and so is a lot of copper
+    await asks('214748', '36', '47', 2147483647) // the most a character can hold
   })
 
-  it('refuses an amount that is empty, zero, negative, not a number or more than a character can hold', async () => {
+  it('refuses an amount that is empty, zero, negative, not whole or more than a character can hold', async () => {
     const fetchMock = mockPlan(plan())
     const { user } = renderPlanner()
-    for (const bad of ['', '0', '-5', '214749']) {
-      await user.clear(budgetBox())
-      if (bad) await user.type(budgetBox(), bad)
+    const refused = async (gold: string, silver = '', copper = '') => {
+      await enter(user, gold, silver, copper)
       await go(user)
-      expect(await screen.findByRole('alert')).toHaveTextContent(/enter an amount of gold/i)
+      expect(await screen.findByRole('alert')).toHaveTextContent(/enter an amount/i)
     }
+    await refused('') // nothing
+    await refused('0', '0', '0') // zero
+    await refused('-5') // negative
+    await refused('1.5') // not whole: say it with silver instead
+    await refused('1,5')
+    await refused('abc')
+    await refused('', '5x')
+    await refused('214749') // more than a character can hold
+    await refused('214748', '36', '48') // one copper more
+    await refused('', '', '9999999999999')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -149,10 +176,10 @@ describe('InvestmentPlanner', () => {
   it('shows an error when the server fails, and keeps the form', async () => {
     mockPlan('boom', 500)
     const { user } = renderPlanner()
-    await user.type(budgetBox(), '500')
+    await enter(user, '500', '25', '3')
     await go(user)
     expect(await screen.findByRole('alert')).toHaveTextContent(/something went wrong/i)
-    expect(budgetBox()).toHaveValue('500')
+    expect([goldBox(), silverBox(), copperBox()].map((b) => (b as HTMLInputElement).value)).toEqual(['500', '25', '3'])
   })
 
   it('opens an item when its name is picked', async () => {
@@ -169,6 +196,8 @@ describe('InvestmentPlanner', () => {
     const fetchMock = mockPlan(plan({ picks: [pick({ name: 'Paño de lino' })] }))
     const { user } = renderPlanner({ lang: 'es' })
     expect(screen.getByRole('heading', { name: /planificador de inversión/i })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: /cantidad a invertir/i })).toBeInTheDocument()
+    expect([goldBox(), silverBox(), copperBox()].map((b) => b.getAttribute('data-coin'))).toEqual(['gold', 'silver', 'copper'])
     await user.type(budgetBox(), '500')
     await go(user)
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/plan?realm=110&budget=5000000&lang=es'))
