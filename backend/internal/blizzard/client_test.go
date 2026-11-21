@@ -91,6 +91,45 @@ func TestItemInfoCombinesNameAndIconFromTheStaticNamespace(t *testing.T) {
 	}
 }
 
+func TestItemInfoReadsTheSpanishNamesOfTheItemAndItsCategory(t *testing.T) {
+	c := fakeBlizzard(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/data/wow/item/7":
+			if r.URL.Query().Get("locale") != "" {
+				t.Errorf("locale = %q, want none so that every language comes back at once", r.URL.Query().Get("locale"))
+			}
+			w.Write([]byte(`{"id":7,"name":{"en_US":"Linen Cloth","en_GB":"Linen Cloth","es_ES":"Paño de lino","es_MX":"Paño de lino"},
+				"sell_price":13,"item_class":{"id":7,"name":{"en_US":"Trade Goods","en_GB":"Trade Goods","es_ES":"Objeto comerciable"}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	info, err := c.ItemInfo(context.Background(), "static-forever-eu", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Name != "Linen Cloth" || info.NameES != "Paño de lino" {
+		t.Errorf("names = %q / %q, want the English and the Spain Spanish ones", info.Name, info.NameES)
+	}
+	if info.ClassName != "Trade Goods" || info.ClassNameES != "Objeto comerciable" {
+		t.Errorf("category = %q / %q", info.ClassName, info.ClassNameES)
+	}
+}
+
+func TestItemInfoWithoutSpanishLeavesItEmpty(t *testing.T) {
+	c := fakeBlizzard(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/data/wow/media/item/7" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"id":7,"name":{"en_GB":"Linen Cloth"}}`))
+	})
+	info, err := c.ItemInfo(context.Background(), "static-forever-eu", 7)
+	if err != nil || info.Name != "Linen Cloth" || info.NameES != "" {
+		t.Fatalf("got %+v, %v", info, err)
+	}
+}
+
 func TestItemInfoStillReturnsTheNameWhenThereIsNoIcon(t *testing.T) {
 	c := fakeBlizzard(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/data/wow/media/item/7" {

@@ -62,7 +62,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	for _, col := range [][2]string{{"icon", "TEXT"}, {"vendor_sell", "INTEGER"}, {"class_id", "INTEGER"}, {"class_name", "TEXT"}} {
+	for _, col := range [][2]string{{"icon", "TEXT"}, {"vendor_sell", "INTEGER"}, {"class_id", "INTEGER"}, {"class_name", "TEXT"}, {"name_es", "TEXT"}, {"class_name_es", "TEXT"}} {
 		if err := addColumn(db, "items", col[0], col[1]); err != nil {
 			db.Close()
 			return nil, err
@@ -338,6 +338,33 @@ type ItemSummary struct {
 	SoldHigh int `json:"soldHigh"`
 }
 
+// SaveItemSpanish records the Spanish name of an item and of its category. Empty texts mean Blizzard
+// has none: the item is then marked as done, so it is not asked for again, and shows in English.
+func (s *Store) SaveItemSpanish(id int, name, className string) error {
+	_, err := s.db.Exec(`UPDATE items SET name_es = ?, class_name_es = ? WHERE id = ?`, name, className, id)
+	return err
+}
+
+// ItemsMissingSpanish lists up to limit items that have prices and a record, but whose Spanish texts were
+// never fetched (they were named before Spanish existed).
+func (s *Store) ItemsMissingSpanish(limit int) ([]int, error) {
+	rows, err := s.db.Query(`SELECT id FROM items
+		WHERE name_es IS NULL AND id IN (SELECT DISTINCT item_id FROM snapshots) LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // SaveItemClass records an item's category; classID -1 means the item has none.
 func (s *Store) SaveItemClass(id, classID int, name string) error {
 	_, err := s.db.Exec(`UPDATE items SET class_id = ?, class_name = ? WHERE id = ?`, classID, name, id)
@@ -351,9 +378,13 @@ type ItemQuery struct {
 	Query string
 	Class *int
 	Limit int
+	Lang  string    // "es" for Spanish names (English where there is none yet); anything else is English
 	Sort  string    // "" for the default order, or SortPrice / SortSoldLow / SortSoldHigh (highest first)
 	Since time.Time // the sold sorts count the units sold since then
 }
+
+// LangSpanish asks for Spanish (Spain) texts; any other language is English.
+const LangSpanish = "es"
 
 // Orders a search can be sorted by, always the highest first.
 const (
@@ -369,28 +400,34 @@ func (s *Store) SearchItems(realmID int, q ItemQuery) ([]ItemSummary, error) {
 	if q.Class != nil {
 		class, anyClass = *q.Class, 0
 	}
+	// The name shown, and what a typed name is matched against: both languages in Spanish, so English works too.
+	name, match := "i.name", "i.name LIKE '%' || ?2 || '%'"
+	if q.Lang == LangSpanish {
+		name = "COALESCE(NULLIF(i.name_es, ''), i.name)"
+		match = "(i.name LIKE '%' || ?2 || '%' OR COALESCE(i.name_es, '') LIKE '%' || ?2 || '%')"
+	}
 	browsing := 0
-	order := "i.name"
+	order := name
 	if q.Query == "" {
-		browsing, order = 1, "sn.quantity DESC, i.name"
+		browsing, order = 1, "sn.quantity DESC, "+name
 	}
 	switch q.Sort {
 	case SortPrice:
-		order = "sn.min DESC, i.name"
+		order = "sn.min DESC, " + name
 	case SortSoldLow:
-		order = "sold_low DESC, i.name"
+		order = "sold_low DESC, " + name
 	case SortSoldHigh:
-		order = "sold_high DESC, i.name"
+		order = "sold_high DESC, " + name
 	}
 	rows, err := s.db.Query(`
-		SELECT i.id, i.name, COALESCE(i.icon, ''), sn.min, sn.median, sn.quantity,
+		SELECT i.id, `+name+`, COALESCE(i.icon, ''), sn.min, sn.median, sn.quantity,
 		       (SELECT COALESCE(SUM(f.sold_low), 0) FROM flows f
 		         WHERE f.house_id = ?1 AND f.item_id = i.id AND f.ts >= ?7) AS sold_low,
 		       (SELECT COALESCE(SUM(f.sold_high), 0) FROM flows f
 		         WHERE f.house_id = ?1 AND f.item_id = i.id AND f.ts >= ?7) AS sold_high
 		FROM items i
 		JOIN snapshots sn ON sn.item_id = i.id AND sn.realm_id = ?1
-		WHERE i.name LIKE '%' || ?2 || '%'
+		WHERE `+match+`
 		  AND (?4 = 1 OR i.class_id = ?5)
 		  AND sn.ts = CASE WHEN ?6 = 1
 		        THEN (SELECT MAX(ts) FROM snapshots WHERE realm_id = ?1)
@@ -422,15 +459,20 @@ type Category struct {
 
 // Categories lists the categories of the items that have prices in a market, by name, with the
 // units sold in each since the given time. Items whose category is not known yet are left out.
-func (s *Store) Categories(realmID int, since time.Time) ([]Category, error) {
+func (s *Store) Categories(realmID int, since time.Time, lang string) ([]Category, error) {
+	// One entry per category even while only some of its items have a Spanish name: Spanish wins when any has it.
+	name := "MAX(i.class_name)"
+	if lang == LangSpanish {
+		name = "COALESCE(MAX(NULLIF(i.class_name_es, '')), MAX(i.class_name))"
+	}
 	rows, err := s.db.Query(`
-		SELECT i.class_id, i.class_name, COALESCE(SUM(f.sold_low), 0), COALESCE(SUM(f.sold_high), 0)
+		SELECT i.class_id, `+name+` AS cname, COALESCE(SUM(f.sold_low), 0), COALESCE(SUM(f.sold_high), 0)
 		FROM items i
 		LEFT JOIN flows f ON f.item_id = i.id AND f.house_id = ?1 AND f.ts >= ?2
 		WHERE i.class_id >= 0 AND i.class_name <> ''
 		  AND EXISTS (SELECT 1 FROM snapshots sn WHERE sn.item_id = i.id AND sn.realm_id = ?1)
-		GROUP BY i.class_id, i.class_name
-		ORDER BY i.class_name`, realmID, since.Unix())
+		GROUP BY i.class_id
+		ORDER BY cname`, realmID, since.Unix())
 	if err != nil {
 		return nil, err
 	}

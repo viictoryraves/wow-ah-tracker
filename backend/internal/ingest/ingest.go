@@ -276,6 +276,32 @@ func (i *Ingester) FillItemNames(ctx context.Context, limit int) error {
 		if err := i.st.SaveItemClass(id, info.ClassID, info.ClassName); err != nil {
 			return err
 		}
+		if err := i.st.SaveItemSpanish(id, info.NameES, info.ClassNameES); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// FillSpanishNames fetches the Spanish names of up to limit items that were named before Spanish existed.
+// New items get both languages from the same request in FillItemNames, so this only backfills. An item
+// Blizzard has no Spanish text for is marked as done and keeps its English name.
+func (i *Ingester) FillSpanishNames(ctx context.Context, limit int) error {
+	ids, err := i.st.ItemsMissingSpanish(limit)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		info, err := i.src.ItemInfo(ctx, i.staticNS, id)
+		if err != nil {
+			continue // retried next cycle
+		}
+		if err := i.st.SaveItemSpanish(id, info.NameES, info.ClassNameES); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -418,6 +444,9 @@ func (i *Ingester) maintain(ctx context.Context, retentionDays int) {
 	round := func() {
 		if err := i.FillItemNames(ctx, 500); err != nil && ctx.Err() == nil {
 			log.Printf("fill item names: %v", err)
+		}
+		if err := i.FillSpanishNames(ctx, 500); err != nil && ctx.Err() == nil {
+			log.Printf("fill Spanish names: %v", err)
 		}
 		if _, err := i.Cleanup(retentionDays); err != nil {
 			log.Printf("cleanup: %v", err)

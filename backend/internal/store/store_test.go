@@ -383,7 +383,7 @@ func TestCategoriesListWhatTheMarketHasSortedByName(t *testing.T) {
 	must(t, s.SaveItemClass(13, 15, "Miscellaneous"))
 	must(t, s.SaveSnapshot(113, t0, []poller.ItemStats{stat(13, 1, 1, 1, 1)})) // another house
 
-	cats, err := s.Categories(110, time.Time{})
+	cats, err := s.Categories(110, time.Time{}, "")
 	must(t, err)
 	var got []string
 	for _, c := range cats {
@@ -544,7 +544,7 @@ func TestCategoriesCarryTheUnitsSoldInThemSince(t *testing.T) {
 		{ItemID: 7, SoldLow: 3, SoldHigh: 5}, {ItemID: 10, SoldLow: 1, SoldHigh: 2}, {ItemID: 8, SoldLow: 0, SoldHigh: 1},
 	}))
 	must(t, s.SaveFlows(113, t0, []poller.ItemFlow{{ItemID: 7, SoldLow: 50, SoldHigh: 50}})) // another house
-	cats, err := s.Categories(110, t0.Add(-24*time.Hour))
+	cats, err := s.Categories(110, t0.Add(-24*time.Hour), "")
 	must(t, err)
 	got := map[string][2]int{}
 	for _, c := range cats {
@@ -555,5 +555,68 @@ func TestCategoriesCarryTheUnitsSoldInThemSince(t *testing.T) {
 		if got[name] != w {
 			t.Errorf("%s sold = %v, want %v (all: %v)", name, got[name], w, got)
 		}
+	}
+}
+
+// spanish names the items of categorised() in Spanish, as the daemon does once it has asked Blizzard.
+func spanish(t *testing.T, s *Store) {
+	t.Helper()
+	must(t, s.SaveItemSpanish(7, "Paño de lino", "Objeto comerciable"))
+	must(t, s.SaveItemSpanish(8, "Chaleco de lino", "Armadura"))
+	// the bandage has no Spanish name yet
+}
+
+func TestResultsComeInSpanishWhenAskedAndFallBackToEnglish(t *testing.T) {
+	s := categorised(t)
+	spanish(t, s)
+	res, err := s.SearchItems(110, ItemQuery{Query: "", Class: intp(7), Lang: "es", Limit: 10})
+	must(t, err)
+	if got := names(res); len(got) != 1 || got[0] != "Paño de lino" {
+		t.Fatalf("got %v, want the Spanish name", got)
+	}
+	all, _ := s.SearchItems(110, ItemQuery{Query: "lino", Lang: "es", Limit: 10})
+	if got := names(all); len(got) != 2 || got[0] != "Chaleco de lino" || got[1] != "Paño de lino" {
+		t.Fatalf("got %v, want a search by a Spanish word, in Spanish name order", got)
+	}
+	bandage, _ := s.SearchItems(110, ItemQuery{Query: "bandage", Lang: "es", Limit: 10})
+	if got := names(bandage); len(got) != 1 || got[0] != "Linen Bandage" {
+		t.Fatalf("got %v, want the English name where there is no Spanish one yet, and English words still match", got)
+	}
+}
+
+func TestResultsStayInEnglishByDefault(t *testing.T) {
+	s := categorised(t)
+	spanish(t, s)
+	res, _ := s.SearchItems(110, ItemQuery{Query: "linen", Limit: 10})
+	if got := names(res); len(got) != 3 || got[0] != "Linen Bandage" {
+		t.Fatalf("got %v, want the English names", got)
+	}
+	if none, _ := s.SearchItems(110, ItemQuery{Query: "paño", Limit: 10}); len(none) != 0 {
+		t.Errorf("an English search must not match the Spanish names: %v", names(none))
+	}
+}
+
+func TestCategoriesComeInSpanishWhenAsked(t *testing.T) {
+	s := categorised(t)
+	spanish(t, s)
+	cats, err := s.Categories(110, time.Time{}, "es")
+	must(t, err)
+	got := map[int]string{}
+	for _, c := range cats {
+		got[c.ID] = c.Name
+	}
+	if len(cats) != 3 || got[7] != "Objeto comerciable" || got[4] != "Armadura" || got[0] != "Consumable" {
+		t.Fatalf("got %v, want Spanish where known (7, 4) and English for the rest, one entry per category", got)
+	}
+}
+
+func TestItemsWithoutASpanishNameAreListedForBackfilling(t *testing.T) {
+	s := categorised(t)
+	must(t, s.SaveItemSpanish(7, "Paño de lino", "Objeto comerciable"))
+	must(t, s.SaveItemSpanish(9, "", "")) // fetched, Blizzard has no Spanish text: do not ask again
+	ids, err := s.ItemsMissingSpanish(10)
+	must(t, err)
+	if len(ids) != 1 || ids[0] != 8 {
+		t.Fatalf("got %v, want only the vest", ids)
 	}
 }

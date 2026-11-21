@@ -49,7 +49,7 @@ One user: a Forever player on a Mac who wants to watch prices.
 | FR-1.7 | A ruleset whose houses return no data is checked again every hour and reported once in the log. | ✅ |
 | FR-1.8 | One failing house never prevents the others from being stored. | ✅ |
 | FR-1.9 | Snapshots older than the retention period (30 days, never more) are deleted automatically. | ✅ |
-| FR-1.10 | Item names, icons, vendor prices, categories and kinds (commodity or single) are looked up in the background, in batches, without delaying polling. | ✅ |
+| FR-1.10 | Item names, icons, vendor prices, categories and kinds (commodity or single) are looked up in the background, in batches, without delaying polling. Names and categories are kept in English and in Spanish (Spain), from the same Blizzard request; items named before Spanish existed are backfilled in the background. | ✅ |
 | FR-1.11 | Which rulesets are tracked is configurable; PvP is the default because each ruleset adds about 20,000 stored rows per hour. | ✅ |
 | FR-1.12 | The house IDs of each ruleset come from a fixed mapping inferred from live data, because Blizzard does not say which house belongs to which ruleset. PvP and Normal are well supported, Roleplay and Roleplay PvP less so. | 🟡 |
 
@@ -79,6 +79,7 @@ One user: a Forever player on a Mac who wants to watch prices.
 | FR-3.12 | Prices are shown as WoW currency, each amount followed by its gold, silver or copper coin icon (a zero part is left out); screen readers still hear g, s and c. Gold is worth 100 silver, and silver 100 copper. | ✅ |
 | FR-3.13 | The main header (the page title) is a link that returns to the front page: it clears the search, category, sort and open item and keeps the chosen market. | ✅ |
 | FR-3.14 | The page has its own emblem, shown beside the title and as the browser tab icon. It is original artwork, not a Blizzard or WoW mark. | ✅ |
+| FR-3.15 | Item and category names can be served in Spanish (Spain) on request. A search then matches the Spanish and the English name, and an item with no Spanish name yet keeps its English one. | ✅ |
 | FR-3.6 | The ruleset, faction, search, category, sort order and item are kept in the address, so a view can be shared and reloaded. An unknown market falls back to the first one. | ✅ |
 | FR-3.7 | Loading, empty and error states are shown; the page says when no market has data yet. | ✅ |
 | FR-3.8 | Keyboard focus moves to the item heading when an item is picked. | ✅ |

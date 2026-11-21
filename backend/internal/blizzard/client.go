@@ -90,6 +90,12 @@ type Result struct {
 // GetJSON GETs path (or a full URL) in the given namespace and decodes the JSON body into out.
 // If ifModifiedSince is non-zero a conditional request is made and ErrNotModified is returned on 304.
 func (c *Client) GetJSON(ctx context.Context, path, namespace string, ifModifiedSince time.Time, out interface{}) (Result, error) {
+	return c.getJSON(ctx, path, namespace, "en_GB", ifModifiedSince, out)
+}
+
+// getJSON is GetJSON in a chosen locale. With no locale Blizzard answers every localizable text as an
+// object keyed by locale, so one request carries all the languages.
+func (c *Client) getJSON(ctx context.Context, path, namespace, locale string, ifModifiedSince time.Time, out interface{}) (Result, error) {
 	var res Result
 	for attempt := 0; attempt < 2; attempt++ {
 		tok, err := c.accessToken(ctx, attempt > 0)
@@ -103,7 +109,10 @@ func (c *Client) GetJSON(ctx context.Context, path, namespace string, ifModified
 		if i := strings.Index(u, "?"); i >= 0 {
 			u = u[:i]
 		}
-		q := url.Values{"namespace": {namespace}, "locale": {"en_GB"}}
+		q := url.Values{"namespace": {namespace}}
+		if locale != "" {
+			q.Set("locale", locale)
+		}
 		req, err := http.NewRequestWithContext(ctx, "GET", u+"?"+q.Encode(), nil)
 		if err != nil {
 			return res, err
@@ -225,7 +234,35 @@ type ItemInfo struct {
 	// NoClass and "" when the item has none.
 	ClassID   int
 	ClassName string
+	// NameES and ClassNameES are the same in Spanish (Spain), or "" when Blizzard has no Spanish text.
+	NameES      string
+	ClassNameES string
 }
+
+// localized is a text Blizzard serves either as a plain string (one locale was asked for) or as an
+// object keyed by locale (none was).
+type localized map[string]string
+
+func (l *localized) UnmarshalJSON(b []byte) error {
+	var plain string
+	if json.Unmarshal(b, &plain) == nil {
+		*l = localized{"en_GB": plain}
+		return nil
+	}
+	return json.Unmarshal(b, (*map[string]string)(l))
+}
+
+func (l localized) first(locales ...string) string {
+	for _, k := range locales {
+		if v := l[k]; v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (l localized) english() string { return l.first("en_GB", "en_US") }
+func (l localized) spanish() string { return l.first("es_ES", "es_MX") }
 
 // NoClass marks an item whose category was fetched but is absent.
 const NoClass = -1
@@ -235,19 +272,19 @@ const NoClass = -1
 // retries later instead of recording "no icon".
 func (c *Client) ItemInfo(ctx context.Context, staticNamespace string, id int) (ItemInfo, error) {
 	var item struct {
-		Name      string `json:"name"`
-		SellPrice int64  `json:"sell_price"`
+		Name      localized `json:"name"`
+		SellPrice int64     `json:"sell_price"`
 		ItemClass *struct {
-			ID   int    `json:"id"`
-			Name string `json:"name"`
+			ID   int       `json:"id"`
+			Name localized `json:"name"`
 		} `json:"item_class"`
 	}
-	if _, err := c.GetJSON(ctx, fmt.Sprintf("/data/wow/item/%d", id), staticNamespace, time.Time{}, &item); err != nil {
+	if _, err := c.getJSON(ctx, fmt.Sprintf("/data/wow/item/%d", id), staticNamespace, "", time.Time{}, &item); err != nil {
 		return ItemInfo{}, err
 	}
-	info := ItemInfo{Name: item.Name, VendorSell: item.SellPrice, ClassID: NoClass}
+	info := ItemInfo{Name: item.Name.english(), NameES: item.Name.spanish(), VendorSell: item.SellPrice, ClassID: NoClass}
 	if item.ItemClass != nil {
-		info.ClassID, info.ClassName = item.ItemClass.ID, item.ItemClass.Name
+		info.ClassID, info.ClassName, info.ClassNameES = item.ItemClass.ID, item.ItemClass.Name.english(), item.ItemClass.Name.spanish()
 	}
 
 	var media struct {

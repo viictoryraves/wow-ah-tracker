@@ -639,3 +639,37 @@ func TestItemsAndCategoriesReportUnitsSoldInTheLastWeek(t *testing.T) {
 		}
 	}
 }
+
+func TestItemsAndCategoriesCanBeAskedInSpanish(t *testing.T) {
+	h, st := categorisedMarket(t)
+	st.SaveItemSpanish(7, "Paño de lino", "Objeto comerciable")
+	st.SaveItemSpanish(9, "Paño de seda", "Objeto comerciable")
+	var items []store.ItemSummary
+	json.Unmarshal(get(t, h, "/api/items?realm=110&category=7&lang=es").Body.Bytes(), &items)
+	if len(items) != 2 || items[0].Name != "Paño de seda" || items[1].Name != "Paño de lino" {
+		t.Errorf("items = %+v, want the Spanish names (most listed first)", items)
+	}
+	var found []store.ItemSummary
+	json.Unmarshal(get(t, h, "/api/items?q=seda&realm=110&lang=es").Body.Bytes(), &found)
+	if len(found) != 1 || found[0].Name != "Paño de seda" {
+		t.Errorf("found = %+v, want a search by a Spanish word to work", found)
+	}
+	var cats []store.Category
+	json.Unmarshal(get(t, h, "/api/categories?realm=110&lang=es").Body.Bytes(), &cats)
+	names := map[string]bool{}
+	for _, c := range cats {
+		names[c.Name] = true
+	}
+	if !names["Objeto comerciable"] || !names["Armor"] {
+		t.Errorf("categories = %+v, want Spanish where known and English otherwise", cats)
+	}
+}
+
+func TestAnUnknownLanguageIsRejected(t *testing.T) {
+	h, _ := categorisedMarket(t)
+	for _, path := range []string{"/api/items?realm=110&category=7&lang=klingon", "/api/categories?realm=110&lang=klingon"} {
+		if rec := get(t, h, path); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: code = %d, want 400", path, rec.Code)
+		}
+	}
+}

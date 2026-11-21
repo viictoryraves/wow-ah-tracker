@@ -61,7 +61,7 @@ parameter. Conditional requests use `If-Modified-Since` and `Last-Modified` (304
 | `/data/wow/ruleset/index`, `/ruleset/{id}` | the rulesets and their names |
 | `/data/wow/ruleset/{id}/auctions/{house}` | a house's regular listings (`buyout` is a total) |
 | `/data/wow/ruleset/{id}/auctions/{house}/commodities` | a house's stackable listings (`unit_price`) |
-| `/data/wow/item/{id}` (static) | name, vendor `sell_price`, item class (category) |
+| `/data/wow/item/{id}` (static) | name, vendor `sell_price`, item class (category). Asked **without** `locale`, so `name` and `item_class.name` come back as objects keyed by locale: one request carries English (`en_GB`) and Spanish (`es_ES`, else `es_MX`). A plain string is still accepted. |
 | `/data/wow/media/item/{id}` (static) | icon URL |
 
 Facts that shaped the design (found by probing and from Blizzard's docs):
@@ -86,7 +86,7 @@ Facts that shaped the design (found by probing and from Blizzard's docs):
 | Table | Key | Content |
 |---|---|---|
 | `snapshots` | (realm_id = house id, item_id, ts) | `min`, `median`, `avg`, `quantity` per item and moment; `ts` is Blizzard's publication time (unix seconds). Index on `ts`. |
-| `items` | id | `name`, `icon`, `vendor_sell`, `class_id`, `class_name`. NULL means not fetched yet; `icon` "" and `class_id` -1 mean fetched and absent. |
+| `items` | id | `name`, `icon`, `vendor_sell`, `class_id`, `class_name`, `name_es`, `class_name_es`. NULL means not fetched yet (for `name_es`: named before Spanish existed, so `FillSpanishNames` backfills it); `icon` "" and `class_id` -1 mean fetched and absent. |
 | `item_kinds` | item_id | `commodity` 1/0, set from the document the item was listed in. |
 | `flows` | (house_id, item_id, ts) | `sold_low`, `sold_high`, `sales`, `listed`. Index on `ts`. |
 
@@ -152,8 +152,8 @@ Every item endpoint takes `realm` = a **market (house) id**. Without it, the fir
 | Endpoint | Returns |
 |---|---|
 | `GET /api/realms` | rulesets with only their houses that have data: `[{id, name, houses:[{id, faction}]}]` |
-| `GET /api/items?q=&realm=&category=&sort=` | up to 20 items by name; with only `category`, up to 50 most listed; 400 if neither. `sort=price` orders by the lowest buyout, highest first; `sort=sold-low` / `sort=sold-high` by the units sold (`flows.sold_low` / `sold_high`) in the last 7 days, highest first; ties by name; any other value is a 400. Every item carries `soldLow`/`soldHigh`, the sums of `flows` over that window |
-| `GET /api/categories?realm=` | categories sold in the market, by name: `[{id, name, soldLow, soldHigh}]`, the units sold in each over the last 7 days |
+| `GET /api/items?q=&realm=&category=&sort=&lang=` | up to 20 items by name; with only `category`, up to 50 most listed; 400 if neither. `sort=price` orders by the lowest buyout, highest first; `sort=sold-low` / `sort=sold-high` by the units sold (`flows.sold_low` / `sold_high`) in the last 7 days, highest first; ties by name; any other value is a 400. Every item carries `soldLow`/`soldHigh`, the sums of `flows` over that window. `lang=es` returns the Spanish name (English where there is none) and a typed name matches either language; `lang` other than `en`/`es` is a 400 |
+| `GET /api/categories?realm=&lang=` | categories sold in the market, by name: `[{id, name, soldLow, soldHigh}]`, the units sold in each over the last 7 days; `lang=es` names them in Spanish (one entry per category even while only some items have a Spanish name) |
 | `GET /api/items/{id}/history?realm=&days=` | snapshots (default 7 days, capped at retention) |
 | `GET /api/items/{id}/insights?realm=` | insights, advice and the 7-day demand reading; 404 without prices |
 | `GET /api/items/{id}/flow?realm=&days=` | the stored sales-volume rows |

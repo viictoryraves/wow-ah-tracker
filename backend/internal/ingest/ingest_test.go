@@ -27,6 +27,8 @@ type fakeSource struct {
 	itemGate         chan struct{}    // when set, ItemInfo blocks until it is closed
 	vendor           map[int]int64    // what a vendor pays, by item
 	class            map[int]category // category by item; Trade Goods when absent
+	spanish          map[int]string   // Spanish name by item; the category then comes in Spanish too
+	infoCalls        int
 }
 
 type category struct {
@@ -67,6 +69,7 @@ func (f *fakeSource) ItemInfo(ctx context.Context, _ string, id int) (blizzard.I
 			return blizzard.ItemInfo{}, ctx.Err()
 		}
 	}
+	f.infoCalls++
 	n, ok := f.names[id]
 	if !ok {
 		return blizzard.ItemInfo{}, errors.New("404")
@@ -74,6 +77,9 @@ func (f *fakeSource) ItemInfo(ctx context.Context, _ string, id int) (blizzard.I
 	info := blizzard.ItemInfo{Name: n, Icon: "https://icons/" + n + ".jpg", VendorSell: f.vendor[id], ClassID: 7, ClassName: "Trade Goods"}
 	if c, ok := f.class[id]; ok {
 		info.ClassID, info.ClassName = c.id, c.name
+	}
+	if es, ok := f.spanish[id]; ok {
+		info.NameES, info.ClassNameES = es, "es:"+info.ClassName
 	}
 	return info, nil
 }
@@ -535,7 +541,7 @@ func TestFillItemNamesKeepsTheCategory(t *testing.T) {
 	if err := ing.FillItemNames(ctx, 10); err != nil {
 		t.Fatal(err)
 	}
-	cats, err := st.Categories(110, time.Time{})
+	cats, err := st.Categories(110, time.Time{}, "")
 	if err != nil || len(cats) != 2 || cats[0].Name != "Armor" || cats[1].Name != "Trade Goods" {
 		t.Fatalf("categories = %+v err = %v, want Armor and Trade Goods", cats, err)
 	}
@@ -783,5 +789,56 @@ func TestOneRulesetWithoutDataDoesNotStopTheOthers(t *testing.T) {
 			t.Fatal("the Normal ruleset was never polled after PvP had no data")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestFillItemNamesAlsoStoresTheSpanishNames(t *testing.T) {
+	src := source()
+	src.names = map[int]string{2589: "Linen Cloth", 4409: "Linen Vest"}
+	src.spanish = map[int]string{2589: "Paño de lino", 4409: "Chaleco de lino"}
+	ing, st := setup(t, src)
+	ctx := context.Background()
+	if _, err := ing.PollRealm(ctx, pvp()); err != nil {
+		t.Fatal(err)
+	}
+	if err := ing.FillItemNames(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := st.SearchItems(110, store.ItemQuery{Query: "paño", Lang: "es", Limit: 10})
+	if len(res) != 1 || res[0].Name != "Paño de lino" {
+		t.Fatalf("got %+v, want the Spanish name", res)
+	}
+	if missing, _ := st.ItemsMissingSpanish(10); len(missing) != 0 {
+		t.Errorf("missing Spanish = %v, want none: the same request brought both languages", missing)
+	}
+}
+
+func TestFillSpanishNamesBackfillsItemsNamedBeforeSpanishExisted(t *testing.T) {
+	src := source()
+	src.names = map[int]string{2589: "Linen Cloth", 4409: "Linen Vest"}
+	src.spanish = map[int]string{2589: "Paño de lino"} // Blizzard has nothing for the vest
+	ing, st := setup(t, src)
+	ctx := context.Background()
+	if _, err := ing.PollRealm(ctx, pvp()); err != nil {
+		t.Fatal(err)
+	}
+	// a record from before the Spanish names: complete, but never asked in Spanish
+	for id, name := range src.names {
+		st.SaveItem(id, name, "", 0)
+		st.SaveItemClass(id, 7, "Trade Goods")
+	}
+	if err := ing.FillSpanishNames(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := st.SearchItems(110, store.ItemQuery{Query: "paño", Lang: "es", Limit: 10})
+	if len(res) != 1 || res[0].Name != "Paño de lino" {
+		t.Fatalf("got %+v", res)
+	}
+	calls := src.infoCalls
+	if err := ing.FillSpanishNames(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if src.infoCalls != calls {
+		t.Errorf("asked Blizzard again (%d -> %d calls): an item with no Spanish text must be marked as done", calls, src.infoCalls)
 	}
 }

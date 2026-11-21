@@ -137,6 +137,10 @@ func (s *server) searchItems(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	lang, ok := langParam(w, r)
+	if !ok {
+		return
+	}
 	sort := r.URL.Query().Get("sort")
 	switch sort {
 	case "", store.SortPrice, store.SortSoldLow, store.SortSoldHigh:
@@ -149,7 +153,7 @@ func (s *server) searchItems(w http.ResponseWriter, r *http.Request) {
 		limit = browseLimit
 	}
 	items, err := s.st.SearchItems(realm, store.ItemQuery{
-		Query: q, Class: class, Limit: limit, Sort: sort,
+		Query: q, Class: class, Limit: limit, Sort: sort, Lang: lang,
 		Since: time.Now().Add(-demandDays * 24 * time.Hour),
 	})
 	if err != nil {
@@ -160,6 +164,18 @@ func (s *server) searchItems(w http.ResponseWriter, r *http.Request) {
 		items = []store.ItemSummary{}
 	}
 	writeJSON(w, items)
+}
+
+// langParam reads ?lang=: "en" (the default) or "es". Anything else is a 400.
+func langParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	switch lang := r.URL.Query().Get("lang"); lang {
+	case "", "en":
+		return "", true
+	case store.LangSpanish:
+		return lang, true
+	}
+	http.Error(w, "invalid lang", http.StatusBadRequest)
+	return "", false
 }
 
 // status serves /api/status?realm=: when the market's prices were last updated, so a page can show
@@ -190,7 +206,11 @@ func (s *server) listCategories(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cats, err := s.st.Categories(realm, time.Now().Add(-demandDays*24*time.Hour))
+	lang, ok := langParam(w, r)
+	if !ok {
+		return
+	}
+	cats, err := s.st.Categories(realm, time.Now().Add(-demandDays*24*time.Hour), lang)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
