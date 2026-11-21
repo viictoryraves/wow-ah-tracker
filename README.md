@@ -1,7 +1,7 @@
 # WoW Auction Prices
 
 Tracks the **auction house price history** of **World of Warcraft: Forever** items (EU) and shows it in a web app:
-item search, an hourly price chart, and buy/sell signals that take the auction house cut into account.
+item search and category browsing, an hourly price chart, and buy/sell signals that take the auction house cut into account.
 
 - **Backend (Go)** – a daemon that polls Blizzard's official API every few minutes, stores a snapshot whenever the
   auction house data changes (about hourly), and serves a small JSON API.
@@ -37,7 +37,8 @@ cp .env.example .env     # then fill in BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_S
 | `RATES_INTERVAL` | `24h` | How often to re-check them (minimum 1h). |
 | `AH_CUT_PERCENT` | `5` | Fallback cut of the Alliance and Horde houses. |
 | `AH_CUT_BLACKWATER_PERCENT` | `15` | Fallback cut of the cross-faction Blackwater house. |
-| `POLL_INTERVAL` | `5m` | How often to ask Blizzard whether data changed (unchanged data costs almost nothing). |
+| `POLL_INTERVAL` | `1m` | The slowest polling rhythm. Polling speeds up by itself around Blizzard's hourly publication (see below). |
+| `NOTIFICATIONS` | `on` | A macOS notification when new prices reach the database. `off` disables it. |
 | `RETENTION_DAYS` | `30` | History kept (maximum 30). |
 
 ## 2. Run the daemon
@@ -58,13 +59,29 @@ Remove it with `./scripts/uninstall-daemon.sh` (the collected data is kept).
 Notes: it only collects while the Mac is awake and you are logged in. Blizzard only serves the *current* auction
 house, so any hour the Mac sleeps is a gap in the history.
 
+### When it polls
+
+Blizzard publishes the auction houses once an hour, in a burst a few seconds long (at about 22 minutes past the hour,
+Blackwater first and Alliance and Horde 8-12 seconds later). It says the interval may change, so the daemon does not
+hard-code that: it expects the next publication an hour after the last one it saw, sleeps until just before it,
+checks every few seconds around that moment until all houses have the new data, and otherwise checks once a minute.
+An unchanged check is a conditional request with an empty answer, so this costs almost nothing.
+
+### Notifications
+
+Each time new prices are stored, you get one macOS notification per hourly update, for example
+`WoW Forever · PvP updated: Alliance, Horde, Blackwater · 17,479 items · est. 440k-1.3M units sold since the last
+snapshot`. The houses of one burst are merged into a single notification, and restarting the daemon does not
+trigger one. Notifications are shown through `osascript`; if nothing appears, allow them in System Settings >
+Notifications (the sender is usually listed as "Script Editor"). Every notification is also written to the log.
+
 ## 3. Check that it is running
 
 ```sh
 # is the agent loaded and running? (expect: state = running)
 launchctl print gui/$(id -u)/com.wow-ah-tracker | grep -E "state|pid"
 
-# what is it doing? (expect "new snapshot stored" lines about once an hour)
+# what is it doing? (expect "new snapshot stored" and "notification sent" lines about once an hour)
 tail -f ~/Library/Application\ Support/wow-ah-tracker/daemon.log
 
 # does the API answer? (expect a JSON list of rulesets with their houses)
