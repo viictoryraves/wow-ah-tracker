@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { App } from './App'
+import { formatClock } from './format'
 
 // WoW Forever: a ruleset ("Realm" in the API) with an Alliance, a Horde and a Blackwater house.
 const pvp = {
@@ -22,6 +23,8 @@ const normal = {
   ],
 }
 const realms = [pvp, normal]
+
+const UPDATED = '2026-11-21T10:22:56Z' // when the default market's prices were last updated
 
 const categories = [
   { id: 4, name: 'Armor' },
@@ -50,6 +53,7 @@ function mockApi(routes: Routes = {}) {
   const table: Routes = {
     '/api/realms': realms,
     '/api/categories?realm=110': categories,
+    '/api/status?realm=110': { updatedAt: UPDATED },
     '/api/items?q=linen&realm=110': [linen],
     '/api/items/7/history?realm=110&days=1': history,
     '/api/items/7/insights?realm=110': insights,
@@ -549,5 +553,154 @@ describe('item categories', () => {
     await user.click(screen.getByRole('button', { name: /^search$/i }))
     await sleep(500) // long enough for a stray delayed search to show up
     expect(calls.filter((c) => c === '/api/items?realm=110&category=7')).toHaveLength(2) // the selection, then the press
+  })
+})
+
+describe('last update and automatic refresh', () => {
+  const minute = 60_000
+  const updatedMs = new Date(UPDATED).getTime()
+
+  /** Renders the app with a fast status poll and a controllable clock. */
+  async function renderTimed(routes: Routes = {}, nowMs = updatedMs + 5 * minute) {
+    const clock = { now: nowMs }
+    const calls = mockApi(routes)
+    const user = userEvent.setup()
+    render(<App pollMs={40} now={() => clock.now} />)
+    await screen.findByLabelText(/^faction$/i)
+    return { user, calls, clock }
+  }
+
+  it('shows when the prices were last updated, at the top of the page', async () => {
+    await renderTimed()
+    const label = await screen.findByText(/prices updated/i)
+    expect(label).toHaveTextContent(formatClock(UPDATED))
+    expect(label).toHaveTextContent('5 min ago')
+    // above the search form
+    const form = screen.getByRole('button', { name: /^search$/i }).closest('form')!
+    expect(label.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('says "just now" for a fresh update and counts hours for an old one', async () => {
+    const fresh = await renderTimed({}, updatedMs + 20_000)
+    expect(await screen.findByText(/prices updated/i)).toHaveTextContent('just now')
+    fresh.clock.now = updatedMs + 3 * 60 * minute
+    expect(await screen.findByText(/3 h ago/i)).toBeInTheDocument() // refreshed by the next poll
+  })
+
+  it('shows nothing about an update before the market has any prices', async () => {
+    const { calls } = await renderTimed({ '/api/status?realm=110': { updatedAt: null } })
+    await waitFor(() => expect(calls).toContain('/api/status?realm=110'))
+    expect(screen.queryByText(/prices updated/i)).not.toBeInTheDocument()
+  })
+
+  it('stays quiet when the status cannot be loaded', async () => {
+    const { calls } = await renderTimed({ '/api/status?realm=110': () => new Response('boom', { status: 500 }) })
+    await waitFor(() => expect(calls).toContain('/api/status?realm=110'))
+    expect(screen.queryByText(/prices updated/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows the time of the house being looked at', async () => {
+    const horde = '2026-11-21T09:22:57Z' // Horde has not published the new hour yet
+    const { user } = await renderTimed({
+      '/api/status?realm=113': { updatedAt: horde },
+      '/api/categories?realm=113': categories,
+    })
+    expect(await screen.findByText(/prices updated/i)).toHaveTextContent(formatClock(UPDATED))
+    await user.selectOptions(factionSelect(), '113')
+    await waitFor(() => expect(screen.getByText(/prices updated/i)).toHaveTextContent(formatClock(horde)))
+  })
+
+  it('reloads what is on the page by itself when newer prices are published', async () => {
+    let status = { updatedAt: UPDATED }
+    let price = 12345
+    let historyPoints = history
+    const { user, calls } = await renderTimed({
+      '/api/status?realm=110': () => new Response(JSON.stringify(status)),
+      '/api/items?q=linen&realm=110': () => new Response(JSON.stringify([{ ...linen, min: price }])),
+      '/api/items/7/history?realm=110&days=1': () => new Response(JSON.stringify(historyPoints)),
+    })
+    await pickLinen(user)
+    expect(screen.getByText(/lowest now/i).parentElement).toHaveTextContent('1g 23s 45c')
+    await screen.findByRole('img', { name: /price history/i })
+    const before = {
+      search: calls.filter((c) => c === '/api/items?q=linen&realm=110').length,
+      history: calls.filter((c) => c === '/api/items/7/history?realm=110&days=1').length,
+      insights: calls.filter((c) => c === '/api/items/7/insights?realm=110').length,
+    }
+
+    // Blizzard publishes the next hour
+    price = 20000
+    historyPoints = [...history, { time: '2026-11-21T10:22:00Z', min: 20000, median: 21000, avg: 21000, quantity: 70 }]
+    status = { updatedAt: '2026-11-21T11:22:56Z' }
+
+    await waitFor(() => expect(screen.getByText(/lowest now/i).parentElement).toHaveTextContent('2g'))
+    expect(calls.filter((c) => c === '/api/items?q=linen&realm=110').length).toBe(before.search + 1)
+    await waitFor(() => expect(calls.filter((c) => c === '/api/items/7/history?realm=110&days=1').length).toBe(before.history + 1))
+    expect(calls.filter((c) => c === '/api/items/7/insights?realm=110').length).toBe(before.insights + 1)
+    // still on the same item, and the label moved on
+    expect(screen.getByRole('heading', { name: /linen cloth/i })).toBeInTheDocument()
+    expect(screen.getByText(/prices updated/i)).toHaveTextContent(formatClock('2026-11-21T11:22:56Z'))
+  })
+
+  it('does not take keyboard focus away when it refreshes', async () => {
+    let status = { updatedAt: UPDATED }
+    const { user } = await renderTimed({ '/api/status?realm=110': () => new Response(JSON.stringify(status)) })
+    await pickLinen(user)
+    await screen.findByRole('img', { name: /price history/i })
+    screen.getByLabelText(/search items/i).focus() // the user moves on to something else
+    status = { updatedAt: '2026-11-21T11:22:56Z' }
+    await waitFor(() => expect(screen.getByText(/prices updated/i)).toHaveTextContent(formatClock('2026-11-21T11:22:56Z')))
+    await sleep(150)
+    expect(screen.getByLabelText(/search items/i)).toHaveFocus()
+  })
+
+  it('keeps the time range the user chose when it refreshes', async () => {
+    let status = { updatedAt: UPDATED }
+    const { user, calls } = await renderTimed({
+      '/api/status?realm=110': () => new Response(JSON.stringify(status)),
+      '/api/items/7/history?realm=110&days=7': history,
+    })
+    await pickLinen(user)
+    await user.click(await screen.findByRole('button', { name: '7 days' }))
+    await waitFor(() => expect(calls).toContain('/api/items/7/history?realm=110&days=7'))
+    const before = calls.filter((c) => c === '/api/items/7/history?realm=110&days=7').length
+    status = { updatedAt: '2026-11-21T11:22:56Z' }
+    await waitFor(() => expect(calls.filter((c) => c === '/api/items/7/history?realm=110&days=7').length).toBe(before + 1))
+    expect(screen.getByRole('button', { name: '7 days' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('refreshes a browsed category too', async () => {
+    let status = { updatedAt: UPDATED }
+    let first = 'Silk Cloth'
+    const { user } = await renderTimed({
+      '/api/status?realm=110': () => new Response(JSON.stringify(status)),
+      '/api/items?realm=110&category=7': () => new Response(JSON.stringify([{ id: 9, name: first, icon: '', min: 150, median: 160, quantity: 800 }])),
+    })
+    await user.selectOptions(await screen.findByLabelText(/^category$/i), '7') // the categories load after the page
+    expect(await screen.findByRole('button', { name: /silk cloth/i })).toBeInTheDocument()
+    first = 'Mageweave Cloth'
+    status = { updatedAt: '2026-11-21T11:22:56Z' }
+    expect(await screen.findByRole('button', { name: /mageweave cloth/i })).toBeInTheDocument()
+  })
+
+  it('does not reload anything while the update time has not changed', async () => {
+    const { user, calls } = await renderTimed()
+    await pickLinen(user)
+    await screen.findByRole('img', { name: /price history/i })
+    const searches = calls.filter((c) => c === '/api/items?q=linen&realm=110').length
+    await sleep(300) // several polls
+    expect(calls.filter((c) => c.startsWith('/api/status')).length).toBeGreaterThan(3)
+    expect(calls.filter((c) => c === '/api/items?q=linen&realm=110').length).toBe(searches)
+  })
+
+  it('stops checking when the page is closed', async () => {
+    const calls = mockApi()
+    const { unmount } = render(<App pollMs={30} now={() => updatedMs} />)
+    await screen.findByLabelText(/^faction$/i)
+    unmount()
+    const after = calls.length
+    await sleep(200)
+    expect(calls.length).toBe(after)
   })
 })

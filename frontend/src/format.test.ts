@@ -1,4 +1,4 @@
-import { formatMoney, formatPct } from './format'
+import { formatAgo, formatClock, formatMoney, formatPct } from './format'
 
 describe('formatMoney', () => {
   it('splits copper into gold, silver and copper', () => {
@@ -30,5 +30,36 @@ describe('formatPct', () => {
 
   it('shows n/a when there is no value', () => {
     expect(formatPct(null)).toBe('n/a')
+  })
+})
+
+describe('formatAgo', () => {
+  const min = 60_000
+  it('says "just now" within the first minute, and for a clock that is slightly behind', () => {
+    expect(formatAgo(0)).toBe('just now')
+    expect(formatAgo(59_000)).toBe('just now')
+    expect(formatAgo(-5_000)).toBe('just now')
+  })
+
+  it('counts minutes up to an hour', () => {
+    expect(formatAgo(min)).toBe('1 min ago')
+    expect(formatAgo(5 * min + 20_000)).toBe('5 min ago')
+    expect(formatAgo(59 * min)).toBe('59 min ago')
+  })
+
+  it('counts whole hours and then days', () => {
+    expect(formatAgo(60 * min)).toBe('1 h ago')
+    expect(formatAgo(150 * min)).toBe('2 h ago')
+    expect(formatAgo(24 * 60 * min)).toBe('1 d ago')
+    expect(formatAgo(3 * 24 * 60 * min + 5 * min)).toBe('3 d ago')
+  })
+})
+
+describe('formatClock', () => {
+  it('shows hours and minutes in the viewer\'s own time zone', () => {
+    const iso = '2026-11-21T10:22:56Z'
+    const d = new Date(iso)
+    expect(formatClock(iso)).toBe(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+    expect(formatClock(iso)).toMatch(/\d{1,2}[:.]\d{2}/)
   })
 })

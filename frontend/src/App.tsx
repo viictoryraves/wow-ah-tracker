@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchCategories, fetchHistory, fetchInsights, fetchRealms, searchItems } from './api'
+import { fetchCategories, fetchHistory, fetchInsights, fetchRealms, fetchStatus, searchItems } from './api'
 import type { Category, Insights, ItemSummary, Point, Realm } from './api'
-import { formatMoney } from './format'
+import { formatAgo, formatClock, formatMoney } from './format'
 import { InsightsPanel } from './InsightsPanel'
 import { PriceChart } from './PriceChart'
 import { factionLabel, realmOfMarket } from './realms'
@@ -16,8 +16,14 @@ const RANGES: [number, string][] = [
 const SEARCH_DELAY_MS = 300
 const MIN_QUERY_LENGTH = 2
 const ALL_CATEGORIES = 'all'
+const STATUS_POLL_MS = 30_000 // how often to ask whether newer prices were published
 
-export function App() {
+interface Props {
+  pollMs?: number // how often to check for newer prices
+  now?: () => number // the clock, replaceable in tests
+}
+
+export function App({ pollMs = STATUS_POLL_MS, now = Date.now }: Props = {}) {
   // The address carries realm, search and item so a view can be shared or reloaded.
   const [initial] = useState(() => new URLSearchParams(window.location.search))
   const [realms, setRealms] = useState<Realm[]>([])
@@ -40,6 +46,20 @@ export function App() {
   const pendingItem = useRef(Number(initial.get('item')) || undefined) // item to reselect after the first search
   const lastSearch = useRef('')
   const searchSeq = useRef(0)
+  const lastQuery = useRef<{ text: string; realm: number; category?: number } | undefined>(undefined) // what the results on screen came from
+  const nowRef = useRef(now)
+  const realmRef = useRef<number | undefined>(realm)
+  useEffect(() => {
+    // kept in refs so the status poll and the refresh effect always read the latest values without restarting
+    nowRef.current = now
+    realmRef.current = realm
+  })
+
+  // When the market's prices were last updated, and a counter that moves when newer ones arrive.
+  const [status, setStatus] = useState<{ market: number; at: string | null }>()
+  const [clock, setClock] = useState(() => now())
+  const [refreshKey, setRefreshKey] = useState(0)
+  const selectedId = selected?.id
 
   useEffect(() => {
     fetchRealms()
@@ -52,6 +72,30 @@ export function App() {
       })
       .catch(() => setError(true))
   }, [initial])
+
+  // Ask now and then when the market was last updated. A newer time means Blizzard published a new
+  // hour, so everything on the page that comes from the prices is loaded again.
+  useEffect(() => {
+    if (realm === undefined) return
+    let stale = false
+    let known: { at: string | null } | undefined // the first reading of a market is only a baseline
+    const load = () =>
+      fetchStatus(realm)
+        .then(({ updatedAt }) => {
+          if (stale) return
+          setClock(nowRef.current())
+          setStatus({ market: realm, at: updatedAt })
+          if (known && known.at !== updatedAt) setRefreshKey((k) => k + 1)
+          known = { at: updatedAt }
+        })
+        .catch(() => {}) // the label is optional: stay quiet and try again next time
+    load()
+    const timer = setInterval(load, pollMs)
+    return () => {
+      stale = true
+      clearInterval(timer)
+    }
+  }, [realm, pollMs])
 
   // The categories on sale in the current market. A category this market does not sell is dropped.
   useEffect(() => {
@@ -67,36 +111,52 @@ export function App() {
     return () => {
       stale = true
     }
-  }, [realm])
+  }, [realm, refreshKey])
 
   useEffect(() => {
-    if (!selected || realm === undefined) return
+    if (selectedId === undefined || realm === undefined) return
     let stale = false
-    const key = `${selected.id}:${realm}:${days}`
-    fetchHistory(selected.id, realm, days)
+    const key = `${selectedId}:${realm}:${days}`
+    fetchHistory(selectedId, realm, days)
       .then((points) => !stale && setHistory({ key, points }))
       .catch(() => !stale && setError(true))
     return () => {
       stale = true
     }
-  }, [selected, realm, days])
+  }, [selectedId, realm, days, refreshKey])
 
   useEffect(() => {
-    if (!selected || realm === undefined) return
+    if (selectedId === undefined || realm === undefined) return
     let stale = false
-    const key = `${selected.id}:${realm}`
-    fetchInsights(selected.id, realm)
+    const key = `${selectedId}:${realm}`
+    fetchInsights(selectedId, realm)
       .then((value) => !stale && setInsights({ key, value }))
       .catch(() => !stale && setInsights({ key, value: null })) // insights are optional: the chart still works
     return () => {
       stale = true
     }
-  }, [selected, realm])
+  }, [selectedId, realm, refreshKey])
+
+  // Reload the results on screen (a search or a browse) when newer prices arrive, without clearing them
+  // or the selected item. An answer that arrives after the user started something new is ignored.
+  useEffect(() => {
+    if (refreshKey === 0) return
+    const q = lastQuery.current
+    if (!q || q.realm !== realmRef.current) return
+    const seq = searchSeq.current
+    searchItems(q.text, q.realm, q.category)
+      .then((found) => {
+        if (seq !== searchSeq.current) return
+        setResults(found)
+        setSelected((prev) => (prev ? (found.find((i) => i.id === prev.id) ?? prev) : prev))
+      })
+      .catch(() => {}) // keep what is on screen
+  }, [refreshKey])
 
   // Keyboard and screen reader users land on the details they just asked for.
   useEffect(() => {
-    if (selected) heading.current?.focus()
-  }, [selected])
+    if (selectedId !== undefined) heading.current?.focus()
+  }, [selectedId])
 
   // Only show data that belongs to the current selection (hides stale data while loading).
   const points =
@@ -111,12 +171,14 @@ export function App() {
     setError(false)
   }
 
+  const updatedAt = status && status.market === realm ? status.at : null // only this market's own time
   const currentRealm = realmOfMarket(realms, realm)
   const currentHouses = currentRealm?.houses ?? []
 
   // Answers to older searches are ignored, so a slow one cannot overwrite a newer one.
   const runSearch = useCallback((q: string, realmId: number, categoryId?: number) => {
     lastSearch.current = `${realmId}|${q}|${categoryId ?? ''}`
+    lastQuery.current = { text: q, realm: realmId, category: categoryId }
     const seq = ++searchSeq.current
     const current = () => seq === searchSeq.current
     setError(false)
@@ -167,6 +229,7 @@ export function App() {
       // nothing left to search or browse: back to the guidance
       searchSeq.current++
       lastSearch.current = ''
+      lastQuery.current = undefined
       setSearching(false)
       setResults(undefined)
       setSelected(undefined)
@@ -182,6 +245,11 @@ export function App() {
     <div className="page">
       <header>
         <h1>WoW Auction Prices</h1>
+        {updatedAt && (
+          <p className="updated">
+            Prices updated {formatClock(updatedAt)} · {formatAgo(clock - Date.parse(updatedAt))}
+          </p>
+        )}
         <p className="muted">Price history and buy/sell signals, net of the auction house cut.</p>
       </header>
 

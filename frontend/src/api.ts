@@ -42,6 +42,9 @@ export interface Category {
   name: string
 }
 
+/** When a market's prices were last updated (ISO, UTC); null before its first snapshot. */
+export const fetchStatus = (realm: number) => getJSON<{ updatedAt: string | null }>(`/api/status?realm=${realm}`)
+
 export const fetchCategories = (realm: number) => getJSON<Category[]>(`/api/categories?realm=${realm}`)
 
 /** By name, within a category, or both. Only a category browses what is on sale, the most listed first. */

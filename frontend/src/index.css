@@ -178,3 +178,5 @@ footer { margin-top: 32px; font-size: 0.8125rem; color: var(--muted); }
   color: var(--bad); background: var(--bad-bg);
   border: 1px solid var(--bad); border-radius: 8px;
 }
+
+.updated { margin: 2px 0 4px; font-size: 0.875rem; color: var(--muted); font-variant-numeric: tabular-nums; }
