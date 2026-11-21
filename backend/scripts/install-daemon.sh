@@ -37,7 +37,24 @@ cat > "$PLIST" <<PLISTEOF
 </dict></plist>
 PLISTEOF
 
+# Unload the old service and wait until it is really gone: loading again straight after
+# unloading can fail with "Input/output error" and leave nothing running.
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+i=0
+while launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && [ "$i" -lt 20 ]; do
+  sleep 0.5
+  i=$((i + 1))
+done
+
+# Load the new one, retrying a few times in case launchd is still settling.
+n=0
+until launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; do
+  n=$((n + 1))
+  if [ "$n" -ge 6 ]; then
+    echo "could not start the daemon: launchctl bootstrap kept failing" >&2
+    exit 1
+  fi
+  sleep 1
+done
 echo "installed in: $DEST"
 echo "logs:         $DEST/daemon.log"

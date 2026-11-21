@@ -50,6 +50,9 @@ type Config struct {
 	LiveRates     bool
 	RatesInterval time.Duration
 
+	// Notifications shows a macOS notification when new prices reach the database.
+	Notifications bool
+
 	DBPath        string
 	RetentionDays int
 	PollInterval  time.Duration
@@ -69,13 +72,14 @@ func Load() (Config, error) {
 		Region:               env("REGION", "eu"),
 		RulesetIDs:           []int{1}, // PvP
 		LiveRates:            true,
+		Notifications:        true,
 		RatesInterval:        24 * time.Hour,
 		CutPercent:           5,
 		BlackwaterCutPercent: 15,
 		DBPath:               env("DB_PATH", "data/wow.db"),
 		Addr:                 env("ADDR", ":8080"),
-		RetentionDays:        30,              // Blizzard API terms: data may not be kept longer than 30 days.
-		PollInterval:         5 * time.Minute, // cheap: unchanged data answers 304 with an empty body
+		RetentionDays:        30,          // Blizzard API terms: data may not be kept longer than 30 days.
+		PollInterval:         time.Minute, // the slowest rhythm; polling speeds up around Blizzard's hourly publication
 	}
 	if c.ClientID == "" || c.ClientSecret == "" {
 		return c, fmt.Errorf("BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET are required")
@@ -104,15 +108,11 @@ func Load() (Config, error) {
 		}
 		c.PollInterval = d
 	}
-	if v := strings.ToLower(os.Getenv("LIVE_RATES")); v != "" {
-		switch v {
-		case "off", "false", "0", "no":
-			c.LiveRates = false
-		case "on", "true", "1", "yes":
-			c.LiveRates = true
-		default:
-			return c, fmt.Errorf("invalid LIVE_RATES %q (use on or off)", v)
-		}
+	if c.LiveRates, err = onOff("LIVE_RATES", c.LiveRates); err != nil {
+		return c, err
+	}
+	if c.Notifications, err = onOff("NOTIFICATIONS", c.Notifications); err != nil {
+		return c, err
 	}
 	if v := os.Getenv("RATES_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -132,6 +132,19 @@ func Load() (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// onOff reads an optional on/off switch from the environment.
+func onOff(name string, def bool) (bool, error) {
+	switch strings.ToLower(os.Getenv(name)) {
+	case "":
+		return def, nil
+	case "on", "true", "1", "yes":
+		return true, nil
+	case "off", "false", "0", "no":
+		return false, nil
+	}
+	return def, fmt.Errorf("invalid %s %q (use on or off)", name, os.Getenv(name))
 }
 
 // percent reads an optional 0 to under 100 percentage from the environment.

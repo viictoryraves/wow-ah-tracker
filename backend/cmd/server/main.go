@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"time"
 
 	"github.com/manuel/wow-ah-tracker/internal/api"
 	"github.com/manuel/wow-ah-tracker/internal/blizzard"
 	"github.com/manuel/wow-ah-tracker/internal/config"
 	"github.com/manuel/wow-ah-tracker/internal/ingest"
+	"github.com/manuel/wow-ah-tracker/internal/notify"
 	"github.com/manuel/wow-ah-tracker/internal/rates"
 	"github.com/manuel/wow-ah-tracker/internal/store"
 )
@@ -43,6 +45,21 @@ func main() {
 		}
 		apiRealms = append(apiRealms, api.Realm{ID: r.ID, Name: r.Name, Houses: houses})
 		log.Printf("tracking WoW Forever %s (%s): %d auction houses", r.Name, cfg.Region, len(houses))
+	}
+
+	// A macOS notification when new prices reach the database: one per hourly burst, not one per house.
+	if cfg.Notifications && runtime.GOOS == "darwin" {
+		notifier := notify.MacOS{}
+		batch := notify.NewBatcher(notify.Window, func(u ingest.Update) {
+			title, body := notify.Format(u)
+			if err := notifier.Notify(title, body); err != nil {
+				log.Printf("notification failed: %v", err)
+				return
+			}
+			log.Printf("notification sent: %s | %s", title, body)
+		})
+		ing.OnUpdate = batch.Add
+		defer batch.Flush()
 	}
 
 	go ing.Run(ctx, realms, cfg.PollInterval, cfg.RetentionDays)

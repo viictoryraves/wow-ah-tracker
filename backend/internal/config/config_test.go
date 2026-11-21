@@ -20,7 +20,7 @@ func TestDefaults(t *testing.T) {
 	if c.Region != "eu" {
 		t.Errorf("region = %s", c.Region)
 	}
-	if c.RetentionDays != 30 || c.PollInterval != 5*time.Minute {
+	if c.RetentionDays != 30 || c.PollInterval != time.Minute {
 		t.Errorf("retention/poll = %d/%v", c.RetentionDays, c.PollInterval)
 	}
 }
@@ -187,5 +187,26 @@ func TestTheRatesCheckIntervalCanBeChangedButNotBelowAnHour(t *testing.T) {
 	t.Setenv("RATES_INTERVAL", "1m") // do not hammer a community site
 	if _, err := Load(); err == nil {
 		t.Error("an interval below one hour should be rejected")
+	}
+}
+
+func TestNotificationsAreOnByDefaultAndCanBeSwitchedOff(t *testing.T) {
+	setCreds(t)
+	if c, err := Load(); err != nil || !c.Notifications {
+		t.Fatalf("notifications = %v err = %v, want on by default", c.Notifications, err)
+	}
+	for _, v := range []string{"off", "false", "0", "no"} {
+		t.Setenv("NOTIFICATIONS", v)
+		if c, err := Load(); err != nil || c.Notifications {
+			t.Errorf("NOTIFICATIONS=%q: notifications = %v err = %v, want off", v, c.Notifications, err)
+		}
+	}
+	t.Setenv("NOTIFICATIONS", "on")
+	if c, _ := Load(); !c.Notifications {
+		t.Error("NOTIFICATIONS=on should be on")
+	}
+	t.Setenv("NOTIFICATIONS", "sometimes")
+	if _, err := Load(); err == nil {
+		t.Error("an unrecognised NOTIFICATIONS value should be rejected")
 	}
 }
