@@ -61,7 +61,7 @@ parameter. Conditional requests use `If-Modified-Since` and `Last-Modified` (304
 | `/data/wow/ruleset/index`, `/ruleset/{id}` | the rulesets and their names |
 | `/data/wow/ruleset/{id}/auctions/{house}` | a house's regular listings (`buyout` is a total) |
 | `/data/wow/ruleset/{id}/auctions/{house}/commodities` | a house's stackable listings (`unit_price`) |
-| `/data/wow/item/{id}` (static) | name, vendor `sell_price`, item class (category). Asked **without** `locale`, so `name` and `item_class.name` come back as objects keyed by locale: one request carries English (`en_GB`) and Spanish (`es_ES`, else `es_MX`). A plain string is still accepted. |
+| `/data/wow/item/{id}` (static) | name, vendor `sell_price`, item class (category). Asked **without** `locale`, so `name` and `item_class.name` come back as objects keyed by locale: one request carries English (`en_GB`) and Spanish (`es_ES`, else `es_MX`). |
 | `/data/wow/media/item/{id}` (static) | icon URL |
 
 Facts that shaped the design (found by probing and from Blizzard's docs):

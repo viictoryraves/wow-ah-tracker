@@ -43,8 +43,7 @@ export function formatAgo(ms: number, lang: Lang = 'en'): string {
 export const formatCount = (n: number, lang: Lang = 'en') => n.toLocaleString(localeOf(lang))
 
 /** Units sold in a window as an estimate: a range, or one number when the low and high agree. */
-export function formatSold(low?: number, high?: number, lang: Lang = 'en'): string {
-  if (low === undefined || high === undefined) return '' // an older server does not report sales
+export function formatSold(low: number, high: number, lang: Lang = 'en'): string {
   const n = (v: number) => formatCount(v, lang)
   return translate(lang, 'soldCount', { n: low === high ? n(low) : `${n(low)}–${n(high)}` })
 }

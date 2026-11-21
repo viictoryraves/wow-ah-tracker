@@ -815,25 +815,6 @@ describe('front page', () => {
   })
 })
 
-describe('a server that does not report sales yet', () => {
-  const { soldLow, soldHigh, ...bare } = linen
-  void soldLow
-  void soldHigh
-
-  it('still shows the front page and the results, without the sold figures', async () => {
-    const { user } = await renderApp({
-      '/api/categories?realm=110': categories.map(({ id, name }) => ({ id, name })),
-      '/api/items?q=linen&realm=110': [bare],
-    })
-    const shortcuts = await screen.findByRole('list', { name: /browse by category/i })
-    expect(within(shortcuts).getAllByRole('button')).toHaveLength(3)
-    await user.type(screen.getByLabelText(/search items/i), 'linen')
-    const row = (await screen.findByRole('button', { name: /linen cloth/i })).closest('tr')
-    expect(row).toHaveTextContent('1g 23s 45c')
-    expect(row).not.toHaveTextContent(/sold/i)
-  })
-})
-
 describe('closing the details', () => {
   async function openLinen() {
     const ctx = await renderApp()

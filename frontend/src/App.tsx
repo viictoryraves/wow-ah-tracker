@@ -429,7 +429,7 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
                   <>
                     <ul className="shortcuts" aria-label={t('browseByCategory')}>
                       {[...categories]
-                        .sort((a, b) => (b.soldHigh ?? 0) - (a.soldHigh ?? 0) || a.name.localeCompare(b.name))
+                        .sort((a, b) => b.soldHigh - a.soldHigh || a.name.localeCompare(b.name))
                         .map((c) => (
                           <li key={c.id}>
                             <button type="button" onClick={() => setCategory(c.id)}>
@@ -490,8 +490,8 @@ function Page({ pollMs = STATUS_POLL_MS, now = Date.now }: Props) {
                         </button>
                       </td>
                       <td className="num price"><Money copper={item.min} /></td>
-                      <td className="num">{item.soldLow === undefined ? '' : formatCount(item.soldLow, lang)}</td>
-                      <td className="num">{item.soldHigh === undefined ? '' : formatCount(item.soldHigh, lang)}</td>
+                      <td className="num">{formatCount(item.soldLow, lang)}</td>
+                      <td className="num">{formatCount(item.soldHigh, lang)}</td>
                     </tr>
                   ))}
                 </tbody>

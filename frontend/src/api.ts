@@ -20,8 +20,8 @@ export interface ItemSummary {
   min: number
   median: number
   quantity: number
-  soldLow?: number // units sold or cancelled in the last 7 days; absent from a server that predates them
-  soldHigh?: number // every unit that left in the last 7 days
+  soldLow: number // units sold or cancelled in the last 7 days
+  soldHigh: number // every unit that left in the last 7 days
 }
 
 export interface Point {
@@ -44,8 +44,8 @@ export const fetchRealms = () => getJSON<Realm[]>('/api/realms')
 export interface Category {
   id: number // 0 is a real category (Consumable)
   name: string
-  soldLow?: number // units sold in the category in the last 7 days (low estimate); absent from an older server
-  soldHigh?: number // (high estimate)
+  soldLow: number // units sold in the category in the last 7 days (low estimate)
+  soldHigh: number // (high estimate)
 }
 
 /** When a market's prices were last updated (ISO, UTC); null before its first snapshot. */

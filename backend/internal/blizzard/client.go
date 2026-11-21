@@ -239,18 +239,8 @@ type ItemInfo struct {
 	ClassNameES string
 }
 
-// localized is a text Blizzard serves either as a plain string (one locale was asked for) or as an
-// object keyed by locale (none was).
+// localized is a text as Blizzard serves it when no locale is asked for: an object keyed by locale.
 type localized map[string]string
-
-func (l *localized) UnmarshalJSON(b []byte) error {
-	var plain string
-	if json.Unmarshal(b, &plain) == nil {
-		*l = localized{"en_GB": plain}
-		return nil
-	}
-	return json.Unmarshal(b, (*map[string]string)(l))
-}
 
 func (l localized) first(locales ...string) string {
 	for _, k := range locales {

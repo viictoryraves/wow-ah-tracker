@@ -69,7 +69,7 @@ func TestItemInfoCombinesNameAndIconFromTheStaticNamespace(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/data/wow/item/7":
-			w.Write([]byte(`{"id":7,"name":"Linen Cloth","sell_price":13,"purchase_price":55,"item_class":{"id":7,"name":"Trade Goods"},"item_subclass":{"id":5,"name":"Cloth"}}`))
+			w.Write([]byte(`{"id":7,"name":{"en_GB":"Linen Cloth","es_ES":"Paño de lino"},"sell_price":13,"purchase_price":55,"item_class":{"id":7,"name":{"en_GB":"Trade Goods"}},"item_subclass":{"id":5,"name":"Cloth"}}`))
 		case "/data/wow/media/item/7":
 			w.Write([]byte(`{"assets":[{"key":"icon","value":"https://render.example/icons/56/linen.jpg"}]}`))
 		default:
@@ -136,7 +136,7 @@ func TestItemInfoStillReturnsTheNameWhenThereIsNoIcon(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Write([]byte(`{"id":7,"name":"Linen Cloth"}`))
+		w.Write([]byte(`{"id":7,"name":{"en_GB":"Linen Cloth"}}`))
 	})
 	info, err := c.ItemInfo(context.Background(), "static-classic-eu", 7)
 	if err != nil {
@@ -160,7 +160,7 @@ func TestItemInfoFailsOnTransientIconErrorsSoItIsRetriedNotStoredAsIconless(t *t
 			http.Error(w, "boom", http.StatusInternalServerError)
 			return
 		}
-		w.Write([]byte(`{"id":7,"name":"Linen Cloth"}`))
+		w.Write([]byte(`{"id":7,"name":{"en_GB":"Linen Cloth"}}`))
 	})
 	if _, err := c.ItemInfo(context.Background(), "static-classic-eu", 7); err == nil {
 		t.Fatal("a 500 from the media endpoint must be an error, not 'no icon'")
@@ -257,7 +257,7 @@ func TestItemInfoWithoutAVendorPriceHasZero(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Write([]byte(`{"id":7,"name":"Soulbound Thing"}`)) // items vendors do not buy have no sell_price
+		w.Write([]byte(`{"id":7,"name":{"en_GB":"Soulbound Thing"}}`)) // items vendors do not buy have no sell_price
 	})
 	info, err := c.ItemInfo(context.Background(), "static-forever-eu", 7)
 	if err != nil || info.VendorSell != 0 {
@@ -271,7 +271,7 @@ func TestItemInfoWithoutACategoryIsMarkedAsHavingNone(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Write([]byte(`{"id":7,"name":"Odd Thing"}`))
+		w.Write([]byte(`{"id":7,"name":{"en_GB":"Odd Thing"}}`))
 	})
 	info, err := c.ItemInfo(context.Background(), "static-forever-eu", 7)
 	if err != nil || info.ClassID != NoClass || info.ClassName != "" {
